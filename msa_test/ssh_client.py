@@ -162,8 +162,21 @@ class SessionMSA:
     # Etape 13 : mode Super Utilisateur
     # ------------------------------------------------------------------ #
     def est_root(self):
+        """Vrai uniquement si l'UID courant vaut exactement 0.
+
+        La comparaison porte sur la derniere ligne non vide et sur l'egalite
+        stricte : un UID comme 1000 ou 1010 ne doit surtout pas etre confondu
+        avec l'UID 0, sous peine de sauter le `su` et de lancer smartctl en
+        simple utilisateur.
+        """
         sortie, _ = self.executer("id -u", delai=20)
-        return sortie.strip().endswith("0")
+        lignes = [ligne.strip() for ligne in sortie.splitlines() if ligne.strip()]
+        if not lignes:
+            raise ErreurMSA(
+                "Impossible de lire l'UID courant sur %s (`id -u` sans reponse)."
+                % self.hote
+            )
+        return lignes[-1] == "0"
 
     def passer_root(self):
         """Etape 13 : `su` puis saisie des identifiants Super Utilisateur."""
@@ -193,7 +206,17 @@ class SessionMSA:
     # Etape 13/14 : releve smartctl
     # ------------------------------------------------------------------ #
     def smartctl(self, peripherique):
-        sortie, code = self.executer("smartctl -a %s" % peripherique)
+        sortie, code = self.executer("LC_ALL=C smartctl -a %s" % peripherique)
+        if "command not found" in sortie.lower():
+            # Le PATH herite du compte SSH n'inclut pas toujours /usr/sbin.
+            sortie, code = self.executer(
+                "LC_ALL=C /usr/sbin/smartctl -a %s" % peripherique
+            )
+        if "permission denied" in sortie.lower():
+            raise ErreurMSA(
+                "smartctl refuse l'acces a %s sur %s : la session n'est pas en "
+                "Super Utilisateur." % (peripherique, self.hote)
+            )
         # smartctl utilise un code de retour en bitmask : les bits 0 et 1
         # signalent une erreur d'usage/ouverture, les autres bits sont des
         # etats du disque et n'empechent pas la lecture des attributs.
