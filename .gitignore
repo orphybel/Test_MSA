@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+build/
+dist/
+resultats_msa/
+preferences_msa.json
+.pytest_cache/
