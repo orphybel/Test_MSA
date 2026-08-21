@@ -6,7 +6,13 @@ import glob
 import json
 import os
 
-from .campagne import LIBELLE_PHASE, PARTITIONS, PHASE_AVANT, comparer
+from .campagne import (
+    LIBELLE_PHASE,
+    PARTITIONS,
+    PHASE_AVANT,
+    alertes_avant_apres,
+    comparer,
+)
 
 DOSSIER_RESULTATS = "resultats_msa"
 
@@ -17,6 +23,11 @@ def dossier_resultats(racine=None):
     chemin = os.path.join(racine, DOSSIER_RESULTATS)
     os.makedirs(chemin, exist_ok=True)
     return chemin
+
+
+def _valeur(brut):
+    """Rend lisible une valeur absente dans le PV."""
+    return "non relevé" if brut in (None, "") else brut
 
 
 def _horodatage(campagne):
@@ -35,7 +46,19 @@ def sauvegarder(campagne, racine=None):
 
 def charger(chemin):
     with open(chemin, "r", encoding="utf-8") as fichier:
-        return json.load(fichier)
+        return _migrer(json.load(fichier))
+
+
+def _migrer(campagne):
+    """Rend lisibles les relevés produits par les versions precedentes.
+
+    Les modules y etaient identifies par la cle "cpu" avant que la
+    terminologie de la procedure ("module MSA") ne soit reprise partout.
+    """
+    for module in campagne.get("modules", []):
+        if "msa" not in module and "cpu" in module:
+            module["msa"] = module.pop("cpu")
+    return campagne
 
 
 def derniere_campagne_avant(racine=None):
@@ -59,7 +82,7 @@ def exporter_csv(campagne, racine=None):
         redacteur.writerow(
             [
                 "Phase",
-                "CPU",
+                "MSA",
                 "Adresse IP",
                 "Partition",
                 "ID#188 Command_Timeout (RAW_VALUE)",
@@ -74,7 +97,7 @@ def exporter_csv(campagne, racine=None):
                     redacteur.writerow(
                         [
                             campagne["libelle_phase"],
-                            "CPU%d" % module["cpu"],
+                            "MSA%d" % module["msa"],
                             module["ip"],
                             partition,
                             "",
@@ -86,7 +109,7 @@ def exporter_csv(campagne, racine=None):
                 redacteur.writerow(
                     [
                         campagne["libelle_phase"],
-                        "CPU%d" % module["cpu"],
+                        "MSA%d" % module["msa"],
                         module["ip"],
                         partition,
                         releve["command_timeout"] or "",
@@ -110,28 +133,51 @@ def exporter_pv(campagne_apres, campagne_avant, racine=None):
         ecrire("=" * 78 + "\n\n")
         ecrire("Date            : %s\n" % campagne_apres.get("date", ""))
         ecrire("Operateur       : %s\n" % (campagne_apres.get("operateur") or "..."))
-        ecrire("Numero du MSA   : %s\n" % (campagne_apres.get("numero_msa") or "..."))
         ecrire("Relevé avant    : %s\n" % campagne_avant.get("date", ""))
         ecrire("Nombre de MSA   : %s\n\n" % campagne_apres.get("nombre_msa", ""))
 
         for ligne in lignes_comparaison:
             ecrire("-" * 78 + "\n")
-            ecrire("CPU%d (%s) - %s\n" % (ligne["cpu"], ligne["ip"], ligne["partition"]))
+            ecrire("MSA%d (%s) - %s\n" % (ligne["msa"], ligne["ip"], ligne["partition"]))
             ecrire(
                 "  ID#188 Command_Timeout      : avant=%s   apres=%s\n"
-                % (ligne["avant_188"], ligne["apres_188"])
+                % (_valeur(ligne["avant_188"]), _valeur(ligne["apres_188"]))
             )
             ecrire(
                 "  ID#199 UDMA_CRC_Error_Count : avant=%s   apres=%s\n"
-                % (ligne["avant_199"], ligne["apres_199"])
+                % (_valeur(ligne["avant_199"]), _valeur(ligne["apres_199"]))
             )
             ecrire("  Sanction : %s\n" % ligne["verdict"])
+
+        alertes = alertes_avant_apres(campagne_avant, campagne_apres)
+        if alertes:
+            ecrire("\n" + "=" * 78 + "\n")
+            ecrire("ATTENTION - RAW_VALUE non nulles (erreurs deja comptabilisees\n")
+            ecrire("par le disque). La procedure ne sanctionne que l'egalite des\n")
+            ecrire("valeurs avant/apres, mais ces relevés sont a examiner :\n\n")
+            for alerte in alertes:
+                ecrire(
+                    "  MSA%d (%s) %s : ID#%d %s = %s\n"
+                    % (
+                        alerte["msa"],
+                        alerte["ip"],
+                        alerte["partition"],
+                        alerte["attribut_id"],
+                        alerte["attribut"],
+                        alerte["valeur"],
+                    )
+                )
 
         ecrire("\n" + "=" * 78 + "\n")
         ecrire(
             "CONCLUSION : %s\n"
             % ("CONFORME" if conforme else "NON CONFORME - voir les ecarts ci-dessus")
         )
+        if alertes and conforme:
+            ecrire(
+                "             (valeurs inchangees, mais %d RAW_VALUE non nulle(s) "
+                "signalee(s) ci-dessus)\n" % len(alertes)
+            )
     return chemin, conforme
 
 

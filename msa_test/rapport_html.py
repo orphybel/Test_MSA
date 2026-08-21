@@ -12,8 +12,9 @@ import datetime
 import html
 import os
 
-from .campagne import PARTITIONS, comparer
+from .campagne import PARTITIONS, alertes_avant_apres, comparer
 from .rapport import _horodatage, dossier_resultats
+from .smart_parser import valeur_est_nulle
 
 # (libelle affiche, cle du relevé, cle de la ligne smartctl brute)
 ATTRIBUTS_RAPPORT = (
@@ -50,6 +51,10 @@ h1 { font-size: 20px; margin: 0 0 4px; }
 .bandeau.ok { background: var(--ok-fond); border-color: var(--ok); color: var(--ok); }
 .bandeau.nok { background: var(--nok-fond); border-color: var(--nok); color: var(--nok); }
 .bandeau.neutre { background: var(--neutre-fond); border-color: var(--neutre); color: var(--neutre); }
+.bandeau.alerte { background: var(--neutre-fond); border-color: var(--neutre); color: var(--neutre); }
+.bandeau.alerte ul { margin: 8px 0 0; padding-left: 20px; font-size: 13px; font-weight: 400; }
+.bandeau.alerte li { margin: 2px 0; }
+.bandeau.alerte code { font-family: Consolas, "Courier New", monospace; font-weight: 700; }
 .bandeau span { display: block; font-size: 13px; font-weight: 400; margin-top: 4px; }
 .module {
   background: #fff; border: 1px solid var(--trait); border-radius: 10px;
@@ -75,6 +80,12 @@ td.valeur { font-family: Consolas, "Courier New", monospace; font-size: 15px; fo
 td.attribut, th.attribut { white-space: nowrap; }
 td.sanction { font-weight: 600; }
 td.sanction.identique { color: var(--ok); }
+.puce-alerte {
+  display: inline-block; margin-left: 8px; padding: 1px 7px; border-radius: 999px;
+  font-family: "Segoe UI", Arial, sans-serif; font-size: 11px; font-weight: 700;
+  background: var(--neutre-fond); border: 1px solid var(--neutre); color: var(--neutre);
+}
+tr.alerte { background: var(--neutre-fond); }
 tr.ok td.sanction { color: var(--ok); font-weight: 600; }
 tr.nok td.sanction { color: var(--nok); font-weight: 600; }
 tr.nok { background: var(--nok-fond); }
@@ -95,6 +106,15 @@ footer { color: var(--doux); font-size: 12px; text-align: center; padding: 10px 
   pre { background: #fff; color: #000; border: 1px solid #999; }
 }
 """
+
+
+def _valeur_html(brut):
+    """Valeur RAW_VALUE, assortie d'une pastille lorsqu'elle n'est pas nulle."""
+    if brut in (None, ""):
+        return "&mdash;", False
+    non_nulle = valeur_est_nulle(brut) is False
+    marque = "<span class='puce-alerte'>&ne; 0</span>" if non_nulle else ""
+    return html.escape(str(brut)) + marque, non_nulle
 
 
 def _e(valeur):
@@ -146,10 +166,10 @@ def _sanction_attribut(module_apres, releve_avant, releve_apres, cle):
     ), False
 
 
-def _module_par_cpu(campagne):
+def _module_par_msa(campagne):
     if not campagne:
         return {}
-    return {m["cpu"]: m for m in campagne.get("modules", [])}
+    return {m["msa"]: m for m in campagne.get("modules", [])}
 
 
 def construire_html(campagne_avant, campagne_apres=None):
@@ -159,14 +179,14 @@ def construire_html(campagne_avant, campagne_apres=None):
     if comparaison:
         lignes_comparaison, conforme = comparer(campagne_avant, campagne_apres)
         verdicts = {
-            (l["cpu"], l["partition"]): l["verdict"] for l in lignes_comparaison
+            (l["msa"], l["partition"]): l["verdict"] for l in lignes_comparaison
         }
     else:
         lignes_comparaison, conforme, verdicts = [], None, {}
 
-    avant_par_cpu = _module_par_cpu(campagne_avant)
-    apres_par_cpu = _module_par_cpu(campagne_apres)
-    cpus = sorted(set(avant_par_cpu) | set(apres_par_cpu))
+    avant_par_msa = _module_par_msa(campagne_avant)
+    apres_par_msa = _module_par_msa(campagne_apres)
+    numeros_msa = sorted(set(avant_par_msa) | set(apres_par_msa))
 
     parties = [
         "<!doctype html><html lang='fr'><head><meta charset='utf-8'>",
@@ -181,7 +201,6 @@ def construire_html(campagne_avant, campagne_apres=None):
     infos = [
         ("Date du rapport", datetime.datetime.now().strftime("%d/%m/%Y %H:%M")),
         ("Opérateur", reference.get("operateur")),
-        ("Numéro du MSA", reference.get("numero_msa")),
         ("Nombre de MSA testés", reference.get("nombre_msa")),
         ("1ère adresse IP", reference.get("premiere_ip")),
         ("Relevé avant enregistrement", (campagne_avant or {}).get("date")),
@@ -216,15 +235,38 @@ def construire_html(campagne_avant, campagne_apres=None):
             "sera établie après les 2 heures d'enregistrement (étape 24).</span></div>"
         )
 
-    for cpu in cpus:
-        module_avant = avant_par_cpu.get(cpu)
-        module_apres = apres_par_cpu.get(cpu)
+    alertes = alertes_avant_apres(campagne_avant, campagne_apres)
+    msa_avec_alerte = {a["msa"] for a in alertes}
+    if alertes:
+        elements = "".join(
+            "<li>MSA%d (%s) %s &mdash; ID#%d %s : <code>%s</code></li>"
+            % (
+                a["msa"],
+                _e(a["ip"]),
+                _e(a["partition"]),
+                a["attribut_id"],
+                html.escape(a["attribut"]),
+                _e(a["valeur"]),
+            )
+            for a in alertes
+        )
+        parties.append(
+            "<div class='bandeau alerte'>ATTENTION : %d RAW_VALUE non nulle(s)"
+            "<span>Ces compteurs ont deja enregistré des erreurs. La procédure ne "
+            "sanctionne que l'égalité des valeurs avant/après (étape 24), mais ces "
+            "relevés sont à examiner.</span><ul>%s</ul></div>"
+            % (len(alertes), elements)
+        )
+
+    for numero in numeros_msa:
+        module_avant = avant_par_msa.get(numero)
+        module_apres = apres_par_msa.get(numero)
         courant = module_apres or module_avant
         erreur = (module_apres or {}).get("erreur") or (module_avant or {}).get("erreur")
 
         if comparaison:
             verdicts_module = [
-                verdicts.get((cpu, partition), "") for partition in PARTITIONS
+                verdicts.get((numero, partition), "") for partition in PARTITIONS
             ]
             module_ok = verdicts_module and all(
                 v.startswith("CONFORME") for v in verdicts_module
@@ -237,9 +279,17 @@ def construire_html(campagne_avant, campagne_apres=None):
 
         parties.append("<section class='module'>")
         parties.append(
-            "<h2><span>CPU%d <span class='ip'>&mdash; %s</span></span>"
-            "<span class='etiquette %s'>%s</span></h2>"
-            % (cpu, _e(courant.get("ip")), classe, etiquette)
+            "<h2><span>MSA%d <span class='ip'>&mdash; %s</span></span>"
+            "%s<span class='etiquette %s'>%s</span></h2>"
+            % (
+                numero,
+                _e(courant.get("ip")),
+                "<span class='etiquette neutre'>VALEUR NON NULLE</span> "
+                if numero in msa_avec_alerte
+                else "",
+                classe,
+                etiquette,
+            )
         )
 
         if erreur:
@@ -266,25 +316,36 @@ def construire_html(campagne_avant, campagne_apres=None):
                     sanction, ligne_ok = _sanction_attribut(
                         module_apres, releve_avant, releve_apres, cle
                     )
+                    html_avant, _ = _valeur_html((releve_avant or {}).get(cle))
+                    html_apres, alerte_apres = _valeur_html(
+                        (releve_apres or {}).get(cle)
+                    )
+                    if not ligne_ok:
+                        classe_ligne = "nok"
+                    elif alerte_apres:
+                        classe_ligne = "alerte"
+                    else:
+                        classe_ligne = "ok"
                     parties.append(
                         "<tr class='%s'><td class='attribut'>%s</td><td>%s</td>"
                         "<td class='valeur'>%s</td><td class='valeur'>%s</td>"
                         "<td class='sanction%s'>%s</td></tr>"
                         % (
-                            "ok" if ligne_ok else "nok",
+                            classe_ligne,
                             attribut,
                             _e(partition),
-                            _e((releve_avant or {}).get(cle)),
-                            _e((releve_apres or {}).get(cle)),
+                            html_avant,
+                            html_apres,
                             " identique" if ligne_ok else "",
                             sanction,
                         )
                     )
                 else:
+                    html_valeur, alerte = _valeur_html((releve_avant or {}).get(cle))
                     parties.append(
-                        "<tr><td class='attribut'>%s</td><td>%s</td>"
+                        "<tr class='%s'><td class='attribut'>%s</td><td>%s</td>"
                         "<td class='valeur'>%s</td></tr>"
-                        % (attribut, _e(partition), _e((releve_avant or {}).get(cle)))
+                        % ("alerte" if alerte else "", attribut, _e(partition), html_valeur)
                     )
         parties.append("</tbody></table>")
 

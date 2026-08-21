@@ -95,3 +95,20 @@ def releve_partition(sortie):
         "manquants": manquants,
         "brut": sortie,
     }
+
+
+def valeur_est_nulle(brut):
+    """Indique si une RAW_VALUE vaut zero.
+
+    Retourne True (nulle), False (non nulle) ou None si la valeur est absente
+    ou illisible. La RAW_VALUE peut compter plusieurs champs ("0 0 0") ou
+    porter un commentaire ("30 (Min/Max 20/45)") : seuls les entiers situes
+    avant une eventuelle parenthese sont examines.
+    """
+    if brut is None:
+        return None
+    tete = str(brut).split("(")[0]
+    jetons = re.findall(r"-?\d+", tete)
+    if not jetons:
+        return None
+    return all(int(jeton) == 0 for jeton in jetons)

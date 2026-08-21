@@ -14,11 +14,13 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__, rapport, rapport_html
+from .smart_parser import valeur_est_nulle
 from .campagne import (
     NB_MSA_MAX,
     PARTITIONS,
     PHASE_APRES,
     PHASE_AVANT,
+    alertes_avant_apres,
     comparer,
     executer_campagne,
     liste_ip,
@@ -74,9 +76,8 @@ class Application(tk.Tk):
         self.var_mdp_root = tk.StringVar()
         self.var_port = tk.IntVar(value=22)
         self.var_operateur = tk.StringVar()
-        self.var_numero = tk.StringVar()
 
-        ttk.Label(cadre, text="1ere adresse IP (CPU0) *").grid(
+        ttk.Label(cadre, text="1ere adresse IP (MSA0) *").grid(
             row=0, column=0, sticky="w", padx=8, pady=6
         )
         ttk.Entry(cadre, textvariable=self.var_ip, width=20).grid(
@@ -127,12 +128,6 @@ class Application(tk.Tk):
         ttk.Label(cadre, text="Operateur (PV)").grid(row=3, column=0, sticky="w", padx=8)
         ttk.Entry(cadre, textvariable=self.var_operateur, width=20).grid(
             row=3, column=1, sticky="w", pady=(0, 8)
-        )
-        ttk.Label(cadre, text="Numero du MSA (PV)").grid(
-            row=3, column=2, sticky="w", padx=8
-        )
-        ttk.Entry(cadre, textvariable=self.var_numero, width=20).grid(
-            row=3, column=3, sticky="w", columnspan=2, pady=(0, 8)
         )
 
         self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
@@ -186,7 +181,7 @@ class Application(tk.Tk):
         cadre.pack(fill="both", expand=True, padx=10, pady=6)
 
         colonnes = (
-            "cpu",
+            "msa",
             "ip",
             "partition",
             "av188",
@@ -196,7 +191,7 @@ class Application(tk.Tk):
             "verdict",
         )
         entetes = {
-            "cpu": ("CPU", 60),
+            "msa": ("MSA", 60),
             "ip": ("Adresse IP", 120),
             "partition": ("Partition", 90),
             "av188": ("ID#188 avant", 110),
@@ -213,6 +208,7 @@ class Application(tk.Tk):
         self.tableau.tag_configure("ok", background="#e3f6e8")
         self.tableau.tag_configure("nok", background="#fbe0e0")
         self.tableau.tag_configure("attente", background="#fdf6dd")
+        self.tableau.tag_configure("alerte", background="#fbe9c9")
 
         barre = ttk.Scrollbar(cadre, orient="vertical", command=self.tableau.yview)
         self.tableau.configure(yscrollcommand=barre.set)
@@ -261,7 +257,7 @@ class Application(tk.Tk):
             )
             return
         detail = "   ".join(
-            "CPU%d = %s" % (index, adresse) for index, adresse in enumerate(ips)
+            "MSA%d = %s" % (index, adresse) for index, adresse in enumerate(ips)
         )
         self.etiquette_apercu.configure(
             text="Adresses interrogées : " + detail, foreground="#00693e"
@@ -364,7 +360,6 @@ class Application(tk.Tk):
             "mot_de_passe_root": self.var_mdp_root.get() or None,
             "port": port,
             "operateur": self.var_operateur.get().strip(),
-            "numero_msa": self.var_numero.get().strip(),
         }
 
     def _lancer(self, phase):
@@ -486,7 +481,7 @@ class Application(tk.Tk):
             releve = module["partitions"].get(partition)
             if releve is None:
                 valeurs = (
-                    "CPU%d" % module["cpu"],
+                    "MSA%d" % module["msa"],
                     module["ip"],
                     partition,
                     "",
@@ -497,30 +492,44 @@ class Application(tk.Tk):
                 )
                 self.tableau.insert("", "end", values=valeurs, tags=("nok",))
                 continue
+            non_nulles = [
+                "ID#%d" % attribut_id
+                for attribut_id, cle in (
+                    (188, "command_timeout"),
+                    (199, "udma_crc_error_count"),
+                )
+                if valeur_est_nulle(releve[cle]) is False
+            ]
+            etat = (
+                "ATTENTION : %s non nul" % " et ".join(non_nulles)
+                if non_nulles
+                else ("Relevé - a noter sur le PV" if phase == PHASE_AVANT
+                      else "comparaison en fin de campagne")
+            )
+            tag = "alerte" if non_nulles else "attente"
             if phase == PHASE_AVANT:
                 valeurs = (
-                    "CPU%d" % module["cpu"],
+                    "MSA%d" % module["msa"],
                     module["ip"],
                     partition,
                     releve["command_timeout"],
                     "",
                     releve["udma_crc_error_count"],
                     "",
-                    "Relevé - a noter sur le PV",
+                    etat,
                 )
-                self.tableau.insert("", "end", values=valeurs, tags=("attente",))
             else:
                 valeurs = (
-                    "CPU%d" % module["cpu"],
+                    "MSA%d" % module["msa"],
                     module["ip"],
                     partition,
                     "",
                     releve["command_timeout"],
                     "",
                     releve["udma_crc_error_count"],
-                    "comparaison en fin de campagne",
+                    etat,
                 )
-                self.tableau.insert("", "end", values=valeurs, tags=("attente",))
+            self.tableau.insert("", "end", values=valeurs, tags=(tag,))
 
     def _afficher_campagne(self, campagne, phase):
         self._vider_tableau()
@@ -530,34 +539,56 @@ class Application(tk.Tk):
     def _afficher_comparaison(self, campagne_apres):
         lignes, conforme = comparer(self.campagne_avant, campagne_apres)
         self._vider_tableau()
+        alertes = {
+            (a["msa"], a["partition"])
+            for a in alertes_avant_apres(self.campagne_avant, campagne_apres)
+        }
         for ligne in lignes:
-            tag = "ok" if ligne["verdict"].startswith("CONFORME") else "nok"
+            conforme_ligne = ligne["verdict"].startswith("CONFORME")
+            if not conforme_ligne:
+                tag = "nok"
+            elif (ligne["msa"], ligne["partition"]) in alertes:
+                tag = "alerte"
+            else:
+                tag = "ok"
             self.tableau.insert(
                 "",
                 "end",
                 values=(
-                    "CPU%d" % ligne["cpu"],
+                    "MSA%d" % ligne["msa"],
                     ligne["ip"],
                     ligne["partition"],
                     ligne["avant_188"] if ligne["avant_188"] is not None else "",
                     ligne["apres_188"] if ligne["apres_188"] is not None else "",
                     ligne["avant_199"] if ligne["avant_199"] is not None else "",
                     ligne["apres_199"] if ligne["apres_199"] is not None else "",
-                    ligne["verdict"],
+                    ligne["verdict"]
+                    + (
+                        "  |  ATTENTION : RAW_VALUE non nulle"
+                        if tag == "alerte"
+                        else ""
+                    ),
                 ),
                 tags=(tag,),
             )
         chemin, _ = rapport.exporter_pv(campagne_apres, self.campagne_avant, self.racine)
         self._tracer("PV de comparaison : %s" % chemin)
         self._generer_rapport(self.campagne_avant, campagne_apres)
+        rappel = (
+            "\n\nATTENTION : %d RAW_VALUE non nulle(s) relevée(s) - voir le rapport."
+            % len(alertes)
+            if alertes
+            else ""
+        )
         if conforme:
             self.etiquette_etat.configure(
                 text="Etape 24 : CONFORME - toutes les valeurs sont inchangées."
+                + ("  (valeurs non nulles signalées)" if alertes else "")
             )
             messagebox.showinfo(
                 "Etape 24 - CONFORME",
                 "Les RAW_VALUE ID#188 et ID#199 sont identiques a celles relevées "
-                "avant enregistrement.\n\nPV genere :\n%s" % chemin,
+                "avant enregistrement.%s\n\nPV genere :\n%s" % (rappel, chemin),
             )
         else:
             self.etiquette_etat.configure(

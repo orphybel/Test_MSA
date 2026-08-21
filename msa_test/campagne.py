@@ -7,11 +7,19 @@ Phase "apres"  -> etape 24 (memes relevés + comparaison avec la phase avant).
 import datetime
 import ipaddress
 
-from .smart_parser import ATTRIBUTS, SmartIntrouvable, releve_partition
+from .smart_parser import (
+    ATTRIBUTS,
+    SmartIntrouvable,
+    releve_partition,
+    valeur_est_nulle,
+)
 from .ssh_client import ErreurMSA, SessionMSA
 
 NB_MSA_MAX = 6
 PARTITIONS = ("/dev/sda1", "/dev/sdb1")
+
+# (identifiant SMART, cle correspondante dans un relevé de partition)
+CLES_ATTRIBUTS = ((188, "command_timeout"), (199, "udma_crc_error_count"))
 
 PHASE_AVANT = "avant"
 PHASE_APRES = "apres"
@@ -22,9 +30,9 @@ LIBELLE_PHASE = {
 
 
 def liste_ip(premiere_ip, nombre):
-    """Etape 15 : une IP par carte CPU, incrementee de 1 (cf. Figure 12).
+    """Etape 15 : une IP par module MSA, incrementee de 1 (cf. Figure 12).
 
-    CPU0 = premiere IP saisie, CPU1 = +1, ... jusqu'a CPU5.
+    MSA0 = premiere IP saisie, MSA1 = +1, ... jusqu'a MSA5.
     """
     if not 1 <= nombre <= NB_MSA_MAX:
         raise ValueError(
@@ -37,46 +45,59 @@ def liste_ip(premiere_ip, nombre):
     return [str(base + i) for i in range(nombre)]
 
 
-def relever_msa(cpu, ip, login, mot_de_passe, mot_de_passe_root, port, journal):
+def relever_msa(msa, ip, login, mot_de_passe, mot_de_passe_root, port, journal):
     """Relevé complet d'un module : connexion, su, smartctl sda1 + sdb1."""
     resultat = {
-        "cpu": cpu,
+        "msa": msa,
         "ip": ip,
         "partitions": {},
         "erreur": None,
         "horodatage": datetime.datetime.now().isoformat(timespec="seconds"),
     }
     try:
-        journal("CPU%d (%s) : connexion SSH..." % (cpu, ip))
+        journal("MSA%d (%s) : connexion SSH..." % (msa, ip))
         with SessionMSA(ip, login, mot_de_passe, mot_de_passe_root, port) as session:
-            journal("CPU%d (%s) : passage en Super Utilisateur..." % (cpu, ip))
+            journal("MSA%d (%s) : passage en Super Utilisateur..." % (msa, ip))
             session.passer_root()
             for partition in PARTITIONS:
-                journal("CPU%d (%s) : smartctl -a %s" % (cpu, ip, partition))
+                journal("MSA%d (%s) : smartctl -a %s" % (msa, ip, partition))
                 sortie = session.smartctl(partition)
                 releve = releve_partition(sortie)
                 resultat["partitions"][partition] = releve
                 journal(
-                    "CPU%d (%s) %s : ID#188=%s | ID#199=%s"
+                    "MSA%d (%s) %s : ID#188=%s | ID#199=%s"
                     % (
-                        cpu,
+                        msa,
                         ip,
                         partition,
                         releve["command_timeout"],
                         releve["udma_crc_error_count"],
                     )
                 )
+                for attribut_id, cle in CLES_ATTRIBUTS:
+                    if valeur_est_nulle(releve[cle]) is False:
+                        journal(
+                            "MSA%d (%s) %s : ATTENTION, ID#%d (%s) non nul : %s"
+                            % (
+                                msa,
+                                ip,
+                                partition,
+                                attribut_id,
+                                ATTRIBUTS[attribut_id],
+                                releve[cle],
+                            )
+                        )
                 if releve["manquants"]:
                     journal(
-                        "CPU%d (%s) %s : ATTENTION, attribut(s) absent(s) : %s"
-                        % (cpu, ip, partition, ", ".join(releve["manquants"]))
+                        "MSA%d (%s) %s : ATTENTION, attribut(s) absent(s) : %s"
+                        % (msa, ip, partition, ", ".join(releve["manquants"]))
                     )
     except (ErreurMSA, SmartIntrouvable) as err:
         resultat["erreur"] = str(err)
-        journal("CPU%d (%s) : ECHEC - %s" % (cpu, ip, err))
+        journal("MSA%d (%s) : ECHEC - %s" % (msa, ip, err))
     except Exception as err:  # garde-fou : un MSA en echec n'arrete pas la campagne
         resultat["erreur"] = "Erreur inattendue : %s" % err
-        journal("CPU%d (%s) : ECHEC - %s" % (cpu, ip, err))
+        journal("MSA%d (%s) : ECHEC - %s" % (msa, ip, err))
     return resultat
 
 
@@ -89,16 +110,15 @@ def executer_campagne(config, journal, sur_resultat=None, arret=None):
         "premiere_ip": config["premiere_ip"],
         "nombre_msa": config["nombre_msa"],
         "operateur": config.get("operateur", ""),
-        "numero_msa": config.get("numero_msa", ""),
         "date": datetime.datetime.now().isoformat(timespec="seconds"),
         "modules": [],
     }
-    for cpu, ip in enumerate(ips):
+    for msa, ip in enumerate(ips):
         if arret is not None and arret.is_set():
             journal("Campagne interrompue par l'operateur.")
             break
         resultat = relever_msa(
-            cpu,
+            msa,
             ip,
             config["login"],
             config["mot_de_passe"],
@@ -120,16 +140,16 @@ def comparer(campagne_avant, campagne_apres):
 
     Retourne une liste de lignes de verdict et un booleen global de conformite.
     """
-    avant_par_cpu = {m["cpu"]: m for m in campagne_avant.get("modules", [])}
+    avant_par_msa = {m["msa"]: m for m in campagne_avant.get("modules", [])}
     lignes = []
     conforme = True
 
     for module in campagne_apres.get("modules", []):
-        cpu = module["cpu"]
-        reference = avant_par_cpu.get(cpu)
+        msa = module["msa"]
+        reference = avant_par_msa.get(msa)
         for partition in PARTITIONS:
             ligne = {
-                "cpu": cpu,
+                "msa": msa,
                 "ip": module["ip"],
                 "partition": partition,
                 "avant_188": None,
@@ -182,3 +202,52 @@ def comparer(campagne_avant, campagne_apres):
     if not lignes:
         conforme = False
     return lignes, conforme
+
+
+def alertes_valeurs_non_nulles(campagne):
+    """Liste les RAW_VALUE non nulles relevées sur une campagne.
+
+    La procedure ne sanctionne que l'egalite des valeurs avant/apres
+    (etape 24) : une valeur non nulle n'est donc pas un echec au sens du PV,
+    mais elle traduit des erreurs deja comptabilisees par le disque et doit
+    etre portee a la connaissance de l'operateur.
+    """
+    alertes = []
+    for module in campagne.get("modules", []):
+        for partition in PARTITIONS:
+            releve = module.get("partitions", {}).get(partition)
+            if not releve:
+                continue
+            for attribut_id, cle in CLES_ATTRIBUTS:
+                if valeur_est_nulle(releve.get(cle)) is False:
+                    alertes.append(
+                        {
+                            "msa": module["msa"],
+                            "ip": module["ip"],
+                            "partition": partition,
+                            "attribut_id": attribut_id,
+                            "attribut": ATTRIBUTS[attribut_id],
+                            "valeur": releve.get(cle),
+                        }
+                    )
+    return alertes
+
+
+def alertes_avant_apres(campagne_avant, campagne_apres=None):
+    """Alertes consolidees sur les deux phases.
+
+    Pour chaque module, la phase "apres" fait foi ; on retombe sur la phase
+    "avant" lorsqu'elle n'a rien releve (module injoignable a l'etape 24),
+    afin qu'une valeur non nulle deja mesuree ne disparaisse pas du rapport.
+    """
+    avant_par_msa = {m["msa"]: m for m in (campagne_avant or {}).get("modules", [])}
+    apres_par_msa = {m["msa"]: m for m in (campagne_apres or {}).get("modules", [])}
+    modules = []
+    for numero in sorted(set(avant_par_msa) | set(apres_par_msa)):
+        module = apres_par_msa.get(numero)
+        if not module or module.get("erreur") or not module.get("partitions"):
+            # Relevé "apres" absent ou incomplet : le relevé "avant" fait foi.
+            module = avant_par_msa.get(numero) or module
+        if module:
+            modules.append(module)
+    return alertes_valeurs_non_nulles({"modules": modules})

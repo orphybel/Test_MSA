@@ -47,3 +47,22 @@ def test_attribut_absent_signale():
 def test_sorties_invalides(sortie):
     with pytest.raises(SmartIntrouvable):
         releve_partition(sortie)
+
+
+@pytest.mark.parametrize(
+    "brut,attendu",
+    [
+        ("0", True),
+        ("0 0 0", True),
+        ("12", False),
+        ("0 0 5", False),
+        ("30 (Min/Max 20/45)", False),
+        ("", None),
+        ("abc", None),
+        (None, None),
+    ],
+)
+def test_detection_des_valeurs_non_nulles(brut, attendu):
+    from msa_test.smart_parser import valeur_est_nulle
+
+    assert valeur_est_nulle(brut) is attendu

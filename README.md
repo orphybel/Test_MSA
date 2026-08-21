@@ -8,7 +8,7 @@ de la procédure de test **RERNG-NVR-2-DISQ / MP14-NVR-DISQ** (réf. X301773) :
 | 12 — Connexion SSH à la console du MSA | oui |
 | 13 — `su` (attente de l'invite de mot de passe) puis `smartctl -a /dev/sda1` et `/dev/sdb1` | oui |
 | 14 — Relevé des RAW_VALUE ID#188 (Command_Timeout) et ID#199 (UDMA_CRC_Error_Count) | oui |
-| 15 — Répétition sur chaque module CPU (1 à 6 adresses IP) | oui |
+| 15 — Répétition sur chaque module MSA (1 à 6 adresses IP) | oui |
 | 24 — Nouveau relevé après enregistrement **et comparaison** avec les valeurs avant | oui |
 
 Les étapes manuelles (clé, formatage, 2 h d'enregistrement, FileZilla, VLC)
@@ -18,16 +18,16 @@ restent à la charge de l'opérateur.
 
 1. Lancer `TestMSA.exe`.
 2. Renseigner :
-   - **1ʳᵉ adresse IP (CPU0)** — par défaut `192.168.0.187`, modifiable ;
+   - **1ʳᵉ adresse IP (MSA0)** — par défaut `192.168.0.187`, modifiable ;
      les modules suivants sont déduits par incrément de 1 (cf. Figure 12 de la
-     procédure : CPU0 `.187` → CPU5 `.192`). Les adresses effectivement
+     procédure : MSA0 `.187` → MSA5 `.192`). Les adresses effectivement
      interrogées sont affichées en clair avant lancement.
    - **Nombre de MSA testés** — de 1 à 6.
    - **Login SSH** et **mot de passe** (identifiants du logiciel de
      constitution des bancs de test).
    - **Mot de passe root (su)** — optionnel : laissé vide, le mot de passe SSH
      est réutilisé.
-   - *Optionnel* : port SSH, opérateur et numéro de MSA (repris sur le PV).
+   - *Optionnel* : port SSH et nom de l'opérateur (repris sur le PV).
 3. **Bouton 1 — Relevé AVANT enregistrement (étapes 12 à 15)** : l'application
    se connecte à chaque MSA, attend l'invite de mot de passe du `su`, passe en
    super-utilisateur, exécute les deux `smartctl` et affiche les RAW_VALUE. Le
@@ -50,7 +50,21 @@ Le rapport HTML montre, pour **chaque équipement** :
 - les **lignes `smartctl` complètes**, reprises telles quelles de la console du
   MSA (comme en Figure 11 de la procédure), avant et après enregistrement ;
 - une pastille CONFORME / NON CONFORME par module et un bandeau de conclusion
-  global.
+  global ;
+- un **bandeau d'alerte listant les RAW_VALUE non nulles**, et une pastille
+  `≠ 0` sur chaque valeur concernée.
+
+### Valeurs non nulles
+
+La procédure ne sanctionne que l'**égalité** des valeurs avant/après
+(étape 24) : une RAW_VALUE à 12 qui reste à 12 est donc CONFORME au sens du PV.
+Comme ces compteurs traduisent des erreurs déjà enregistrées par le disque,
+l'application les signale sans modifier ce verdict — bandeau d'alerte en tête
+de rapport, pastille `≠ 0` sur la valeur, ligne surlignée dans le tableau de
+l'interface, et section dédiée dans le PV texte.
+
+Un module relevé avant l'enregistrement mais injoignable à l'étape 24 conserve
+les alertes de son relevé « avant ».
 
 Il est autonome (aucune ressource externe), s'ouvre dans n'importe quel
 navigateur et s'imprime directement en annexe du PV de test.
@@ -102,7 +116,8 @@ Organisation du code :
 
 - `msa_test/ssh_client.py` — session SSH, passage `su`, exécution `smartctl` ;
 - `msa_test/smart_parser.py` — extraction des RAW_VALUE ID#188 et ID#199 ;
-- `msa_test/campagne.py` — parcours des 1 à 6 MSA et comparaison avant/après ;
+- `msa_test/campagne.py` — parcours des 1 à 6 MSA, comparaison avant/après et
+  détection des valeurs non nulles ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
 - `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.
