@@ -9,10 +9,11 @@ import os
 import queue
 import sys
 import threading
+import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, rapport
+from . import __version__, rapport, rapport_html
 from .campagne import (
     NB_MSA_MAX,
     PARTITIONS,
@@ -47,6 +48,7 @@ class Application(tk.Tk):
         self.travail = None
         self.campagne_avant = None
         self.campagne_apres = None
+        self.dernier_rapport = None
 
         self._construire_saisie()
         self._construire_actions()
@@ -167,6 +169,14 @@ class Application(tk.Tk):
         ttk.Button(
             cadre, text="Charger un relevé AVANT...", command=self._charger_avant_fichier
         ).pack(side="left", padx=6)
+
+        self.bouton_rapport = ttk.Button(
+            cadre,
+            text="Ouvrir le rapport visuel",
+            command=self._ouvrir_rapport,
+            state="disabled",
+        )
+        self.bouton_rapport.pack(side="left", padx=6)
 
         self.etiquette_avant = ttk.Label(cadre, text="Aucun relevé AVANT charge")
         self.etiquette_avant.pack(side="left", padx=12)
@@ -415,10 +425,38 @@ class Application(tk.Tk):
                 text="Relevé AVANT termine. Lancer l'enregistrement 2h (etapes 16 a 23)."
             )
             self._afficher_campagne(campagne, PHASE_AVANT)
+            self._generer_rapport(campagne, None)
             return
 
         self.campagne_apres = campagne
         self._afficher_comparaison(campagne)
+
+    def _generer_rapport(self, campagne_avant, campagne_apres):
+        """Produit le rapport visuel HTML et l'ouvre dans le navigateur."""
+        try:
+            chemin = rapport_html.exporter_html(
+                campagne_avant, campagne_apres, self.racine
+            )
+        except Exception as err:
+            self._tracer("Rapport visuel non genere : %s" % err)
+            return None
+        self.dernier_rapport = chemin
+        self.bouton_rapport.configure(state="normal")
+        self._tracer("Rapport visuel : %s" % chemin)
+        self._ouvrir_rapport()
+        return chemin
+
+    def _ouvrir_rapport(self):
+        if not self.dernier_rapport or not os.path.exists(self.dernier_rapport):
+            messagebox.showinfo(
+                "Rapport indisponible",
+                "Lancez d'abord un relevé pour generer le rapport visuel.",
+            )
+            return
+        try:
+            webbrowser.open("file:///" + os.path.abspath(self.dernier_rapport))
+        except Exception as err:
+            self._tracer("Ouverture du navigateur impossible : %s" % err)
 
     def _echouer(self, err):
         self._basculer_boutons(actif=True)
@@ -511,6 +549,7 @@ class Application(tk.Tk):
             )
         chemin, _ = rapport.exporter_pv(campagne_apres, self.campagne_avant, self.racine)
         self._tracer("PV de comparaison : %s" % chemin)
+        self._generer_rapport(self.campagne_avant, campagne_apres)
         if conforme:
             self.etiquette_etat.configure(
                 text="Etape 24 : CONFORME - toutes les valeurs sont inchangées."

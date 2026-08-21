@@ -41,7 +41,18 @@ def parser_attributs(sortie):
     La RAW_VALUE peut contenir des espaces (ex : "0 0 0" ou "30 (Min/Max 20/45)"),
     elle est donc renvoyee telle quelle, sans reformatage.
     """
+    trouves, _ = parser_attributs_et_lignes(sortie)
+    return trouves
+
+
+def parser_attributs_et_lignes(sortie):
+    """Comme `parser_attributs`, en retournant aussi la ligne smartctl entiere.
+
+    La ligne complete est reprise telle quelle dans le rapport visuel afin que
+    l'operateur retrouve l'affichage de la console (Figure 11 de la procedure).
+    """
     trouves = {}
+    lignes_brutes = {}
     for ligne in sortie.splitlines():
         m = _LIGNE_ATTRIBUT.match(ligne)
         if not m:
@@ -49,7 +60,8 @@ def parser_attributs(sortie):
         attribut_id = int(m.group("id"))
         if attribut_id in ATTRIBUTS:
             trouves[attribut_id] = m.group("raw").strip()
-    return trouves
+            lignes_brutes[attribut_id] = ligne.rstrip()
+    return trouves, lignes_brutes
 
 
 def verifier_sortie(sortie):
@@ -70,13 +82,16 @@ def verifier_sortie(sortie):
 def releve_partition(sortie):
     """Retourne le releve d'une partition : valeurs 188/199 + sortie brute."""
     verifier_sortie(sortie)
-    attributs = parser_attributs(sortie)
+    attributs, lignes_brutes = parser_attributs_et_lignes(sortie)
     manquants = [
         "ID#%d (%s)" % (i, ATTRIBUTS[i]) for i in ATTRIBUTS if i not in attributs
     ]
     return {
         "command_timeout": attributs.get(188),
         "udma_crc_error_count": attributs.get(199),
+        # Lignes smartctl completes, telles qu'affichees dans la console.
+        "ligne_188": lignes_brutes.get(188),
+        "ligne_199": lignes_brutes.get(199),
         "manquants": manquants,
         "brut": sortie,
     }

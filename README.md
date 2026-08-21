@@ -6,7 +6,7 @@ de la procédure de test **RERNG-NVR-2-DISQ / MP14-NVR-DISQ** (réf. X301773) :
 | Étape de la procédure | Automatisée |
 |---|---|
 | 12 — Connexion SSH à la console du MSA | oui |
-| 13 — `su` puis `smartctl -a /dev/sda1` et `/dev/sdb1` | oui |
+| 13 — `su` (attente de l'invite de mot de passe) puis `smartctl -a /dev/sda1` et `/dev/sdb1` | oui |
 | 14 — Relevé des RAW_VALUE ID#188 (Command_Timeout) et ID#199 (UDMA_CRC_Error_Count) | oui |
 | 15 — Répétition sur chaque module CPU (1 à 6 adresses IP) | oui |
 | 24 — Nouveau relevé après enregistrement **et comparaison** avec les valeurs avant | oui |
@@ -29,14 +29,31 @@ restent à la charge de l'opérateur.
      est réutilisé.
    - *Optionnel* : port SSH, opérateur et numéro de MSA (repris sur le PV).
 3. **Bouton 1 — Relevé AVANT enregistrement (étapes 12 à 15)** : l'application
-   se connecte à chaque MSA, passe en super-utilisateur, exécute les deux
-   `smartctl` et affiche les RAW_VALUE. Le relevé est enregistré
-   automatiquement.
+   se connecte à chaque MSA, attend l'invite de mot de passe du `su`, passe en
+   super-utilisateur, exécute les deux `smartctl` et affiche les RAW_VALUE. Le
+   relevé est enregistré et le **rapport visuel** s'ouvre dans le navigateur.
 4. Dérouler manuellement les étapes 16 à 23 (formatage, RECORD, 2 h
    d'enregistrement, vérification FileZilla/VLC).
 5. **Bouton 2 — Relevé APRÈS enregistrement (étape 24)** : nouveau relevé,
    comparaison automatique avec le relevé « avant », verdict CONFORME /
-   NON CONFORME par partition.
+   NON CONFORME par attribut et par partition, et rapport visuel avant/après.
+
+Le bouton **Ouvrir le rapport visuel** réaffiche à tout moment le dernier
+rapport généré.
+
+## Rapport visuel
+
+Le rapport HTML montre, pour **chaque équipement** :
+
+- un tableau des RAW_VALUE **ID#188** et **ID#199** par partition
+  (avant / après / sanction) ;
+- les **lignes `smartctl` complètes**, reprises telles quelles de la console du
+  MSA (comme en Figure 11 de la procédure), avant et après enregistrement ;
+- une pastille CONFORME / NON CONFORME par module et un bandeau de conclusion
+  global.
+
+Il est autonome (aucune ressource externe), s'ouvre dans n'importe quel
+navigateur et s'imprime directement en annexe du PV de test.
 
 Le relevé « avant » le plus récent est rechargé automatiquement au démarrage :
 l'application peut être fermée pendant les 2 h d'enregistrement.
@@ -49,7 +66,9 @@ Créés dans le sous-dossier `resultats_msa\` situé à côté de l'exécutable 
   « avant » sert de référence à l'étape 24) ;
 - `releves_*.csv` — tableau des RAW_VALUE (séparateur `;`, ouvrable dans Excel) ;
 - `PV_comparaison_*.txt` — synthèse avant/après avec la conclusion, à reporter
-  sur le PV de test.
+  sur le PV de test ;
+- `rapport_avant_*.html` / `rapport_avant_apres_*.html` — rapport visuel
+  (voir ci-dessus), ouvert automatiquement en fin de campagne.
 
 Aucun mot de passe n'est écrit sur disque. Seuls l'adresse IP, le nombre de
 MSA, le login, le port et l'opérateur sont mémorisés dans
@@ -85,4 +104,5 @@ Organisation du code :
 - `msa_test/smart_parser.py` — extraction des RAW_VALUE ID#188 et ID#199 ;
 - `msa_test/campagne.py` — parcours des 1 à 6 MSA et comparaison avant/après ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
+- `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.
