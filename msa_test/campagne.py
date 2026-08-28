@@ -110,6 +110,7 @@ def executer_campagne(config, journal, sur_resultat=None, arret=None):
         "premiere_ip": config["premiere_ip"],
         "nombre_msa": config["nombre_msa"],
         "operateur": config.get("operateur", ""),
+        "serie_nvr": config.get("serie_nvr", ""),
         "date": datetime.datetime.now().isoformat(timespec="seconds"),
         "modules": [],
     }

@@ -27,6 +27,8 @@ restent à la charge de l'opérateur.
      constitution des bancs de test).
    - **Mot de passe root (su)** — optionnel : laissé vide, le mot de passe SSH
      est réutilisé.
+   - **N° de série du NVR** — repris dans le **nom de tous les fichiers
+     produits**, dans l'en-tête du rapport, dans le PV et dans le CSV.
    - *Optionnel* : port SSH et nom de l'opérateur (repris sur le PV).
 3. **Bouton 1 — Relevé AVANT enregistrement (étapes 12 à 15)** : l'application
    se connecte à chaque MSA, attend l'invite de mot de passe du `su`, passe en
@@ -74,7 +76,11 @@ l'application peut être fermée pendant les 2 h d'enregistrement.
 
 ## Fichiers produits
 
-Créés dans le sous-dossier `resultats_msa\` situé à côté de l'exécutable :
+Créés dans le sous-dossier `resultats_msa\` situé à côté de l'exécutable. Le
+n° de série du NVR est inséré dans chaque nom de fichier (par exemple
+`rapport_avant_apres_NVR-MP14-2026-0087_2026-08-21_11-22-47.html`) ; les
+caractères refusés par Windows sont remplacés et le nom reste valide si aucun
+numéro n'est saisi :
 
 - `campagne_avant_*.json` / `campagne_apres_*.json` — relevés bruts (le JSON
   « avant » sert de référence à l'étape 24) ;
@@ -85,8 +91,9 @@ Créés dans le sous-dossier `resultats_msa\` situé à côté de l'exécutable 
   (voir ci-dessus), ouvert automatiquement en fin de campagne.
 
 Aucun mot de passe n'est écrit sur disque. Seuls l'adresse IP, le nombre de
-MSA, le login, le port et l'opérateur sont mémorisés dans
-`preferences_msa.json`.
+MSA, le login, le port, l'opérateur et le n° de série du NVR sont mémorisés
+dans `preferences_msa.json` — le numéro est ainsi conservé entre le relevé
+« avant » et le relevé « après », deux heures plus tard.
 
 ## Construction de l'exécutable
 

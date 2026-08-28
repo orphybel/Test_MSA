@@ -76,6 +76,7 @@ class Application(tk.Tk):
         self.var_mdp_root = tk.StringVar()
         self.var_port = tk.IntVar(value=22)
         self.var_operateur = tk.StringVar()
+        self.var_serie = tk.StringVar()
 
         ttk.Label(cadre, text="1ere adresse IP (MSA0) *").grid(
             row=0, column=0, sticky="w", padx=8, pady=6
@@ -125,9 +126,15 @@ class Application(tk.Tk):
             foreground="#555555",
         ).grid(row=2, column=2, columnspan=4, sticky="w", padx=8)
 
-        ttk.Label(cadre, text="Operateur (PV)").grid(row=3, column=0, sticky="w", padx=8)
-        ttk.Entry(cadre, textvariable=self.var_operateur, width=20).grid(
+        ttk.Label(cadre, text="N° de serie du NVR").grid(
+            row=3, column=0, sticky="w", padx=8
+        )
+        ttk.Entry(cadre, textvariable=self.var_serie, width=20).grid(
             row=3, column=1, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(cadre, text="Operateur (PV)").grid(row=3, column=2, sticky="w", padx=8)
+        ttk.Entry(cadre, textvariable=self.var_operateur, width=20).grid(
+            row=3, column=3, sticky="w", columnspan=2, pady=(0, 8)
         )
 
         self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
@@ -280,6 +287,7 @@ class Application(tk.Tk):
         self.var_login.set(prefs.get("login", ""))
         self.var_port.set(prefs.get("port", 22))
         self.var_operateur.set(prefs.get("operateur", ""))
+        self.var_serie.set(prefs.get("serie_nvr", ""))
 
     def _enregistrer_preferences(self):
         prefs = {
@@ -288,6 +296,7 @@ class Application(tk.Tk):
             "login": self.var_login.get(),
             "port": int(self.var_port.get()),
             "operateur": self.var_operateur.get(),
+            "serie_nvr": self.var_serie.get(),
         }
         try:
             with open(self._chemin_preferences(), "w", encoding="utf-8") as fichier:
@@ -360,6 +369,7 @@ class Application(tk.Tk):
             "mot_de_passe_root": self.var_mdp_root.get() or None,
             "port": port,
             "operateur": self.var_operateur.get().strip(),
+            "serie_nvr": self.var_serie.get().strip(),
         }
 
     def _lancer(self, phase):

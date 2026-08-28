@@ -13,7 +13,7 @@ import html
 import os
 
 from .campagne import PARTITIONS, alertes_avant_apres, comparer
-from .rapport import _horodatage, dossier_resultats
+from .rapport import _horodatage, dossier_resultats, fragment_nom
 from .smart_parser import valeur_est_nulle
 
 # (libelle affiche, cle du relevé, cle de la ligne smartctl brute)
@@ -191,7 +191,13 @@ def construire_html(campagne_avant, campagne_apres=None):
     parties = [
         "<!doctype html><html lang='fr'><head><meta charset='utf-8'>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'>",
-        "<title>Rapport SMART MSA - %s</title>" % _e(reference.get("date", "")),
+        "<title>Rapport SMART MSA%s - %s</title>"
+        % (
+            " - " + _e(reference["serie_nvr"])
+            if reference.get("serie_nvr")
+            else "",
+            _e(reference.get("date", "")),
+        ),
         "<style>%s</style></head><body><div class='page'>" % _STYLE,
         "<header><h1>Rapport de test MSA &mdash; relevés SMART ID#188 et ID#199</h1>",
         "<p class='sous-titre'>Procédure X301773 &mdash; RERNG-NVR-2-DISQ / "
@@ -200,6 +206,7 @@ def construire_html(campagne_avant, campagne_apres=None):
     ]
     infos = [
         ("Date du rapport", datetime.datetime.now().strftime("%d/%m/%Y %H:%M")),
+        ("N° de série du NVR", reference.get("serie_nvr")),
         ("Opérateur", reference.get("operateur")),
         ("Nombre de MSA testés", reference.get("nombre_msa")),
         ("1ère adresse IP", reference.get("premiere_ip")),
@@ -376,7 +383,11 @@ def exporter_html(campagne_avant, campagne_apres=None, racine=None):
     """Ecrit le rapport visuel et retourne son chemin."""
     reference = campagne_apres or campagne_avant
     suffixe = "avant_apres" if campagne_apres is not None else "avant"
-    nom = "rapport_%s_%s.html" % (suffixe, _horodatage(reference))
+    nom = "rapport_%s%s_%s.html" % (
+        suffixe,
+        fragment_nom(reference.get("serie_nvr")),
+        _horodatage(reference),
+    )
     chemin = os.path.join(dossier_resultats(racine), nom)
     with open(chemin, "w", encoding="utf-8") as fichier:
         fichier.write(construire_html(campagne_avant, campagne_apres))

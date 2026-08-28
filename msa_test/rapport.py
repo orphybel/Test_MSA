@@ -5,6 +5,7 @@ import datetime
 import glob
 import json
 import os
+import re
 
 from .campagne import (
     LIBELLE_PHASE,
@@ -25,6 +26,27 @@ def dossier_resultats(racine=None):
     return chemin
 
 
+# Caracteres refuses par l'explorateur Windows dans un nom de fichier.
+_CARACTERES_INTERDITS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def fragment_nom(serie_nvr):
+    """Transforme un n de serie NVR en fragment de nom de fichier sur.
+
+    Retourne une chaine vide si aucun numero n'est renseigne, sinon un
+    fragment prefixe d'un souligne, nettoye des caracteres refuses par
+    Windows et borne a 40 caracteres.
+    """
+    if not serie_nvr:
+        return ""
+    nettoye = _CARACTERES_INTERDITS.sub("_", str(serie_nvr))
+    nettoye = re.sub(r"\s+", "_", nettoye.strip())
+    nettoye = re.sub(r"_+", "_", nettoye).strip("._")
+    if not nettoye:
+        return ""
+    return "_" + nettoye[:40]
+
+
 def _valeur(brut):
     """Rend lisible une valeur absente dans le PV."""
     return "non relevé" if brut in (None, "") else brut
@@ -37,7 +59,11 @@ def _horodatage(campagne):
 
 def sauvegarder(campagne, racine=None):
     """Ecrit la campagne en JSON (relecture par la phase 'apres')."""
-    nom = "campagne_%s_%s.json" % (campagne["phase"], _horodatage(campagne))
+    nom = "campagne_%s%s_%s.json" % (
+        campagne["phase"],
+        fragment_nom(campagne.get("serie_nvr")),
+        _horodatage(campagne),
+    )
     chemin = os.path.join(dossier_resultats(racine), nom)
     with open(chemin, "w", encoding="utf-8") as fichier:
         json.dump(campagne, fichier, indent=2, ensure_ascii=False)
@@ -75,12 +101,17 @@ def derniere_campagne_avant(racine=None):
 
 def exporter_csv(campagne, racine=None):
     """Tableau des relevés, une ligne par partition."""
-    nom = "releves_%s_%s.csv" % (campagne["phase"], _horodatage(campagne))
+    nom = "releves_%s%s_%s.csv" % (
+        campagne["phase"],
+        fragment_nom(campagne.get("serie_nvr")),
+        _horodatage(campagne),
+    )
     chemin = os.path.join(dossier_resultats(racine), nom)
     with open(chemin, "w", newline="", encoding="utf-8-sig") as fichier:
         redacteur = csv.writer(fichier, delimiter=";")
         redacteur.writerow(
             [
+                "N° de serie NVR",
                 "Phase",
                 "MSA",
                 "Adresse IP",
@@ -96,6 +127,7 @@ def exporter_csv(campagne, racine=None):
                 if releve is None:
                     redacteur.writerow(
                         [
+                            campagne.get("serie_nvr", ""),
                             campagne["libelle_phase"],
                             "MSA%d" % module["msa"],
                             module["ip"],
@@ -108,6 +140,7 @@ def exporter_csv(campagne, racine=None):
                     continue
                 redacteur.writerow(
                     [
+                        campagne.get("serie_nvr", ""),
                         campagne["libelle_phase"],
                         "MSA%d" % module["msa"],
                         module["ip"],
@@ -123,7 +156,10 @@ def exporter_csv(campagne, racine=None):
 def exporter_pv(campagne_apres, campagne_avant, racine=None):
     """Synthese texte reprenant la mise en forme du PV de test (etape 24)."""
     lignes_comparaison, conforme = comparer(campagne_avant, campagne_apres)
-    nom = "PV_comparaison_%s.txt" % _horodatage(campagne_apres)
+    nom = "PV_comparaison%s_%s.txt" % (
+        fragment_nom(campagne_apres.get("serie_nvr")),
+        _horodatage(campagne_apres),
+    )
     chemin = os.path.join(dossier_resultats(racine), nom)
 
     with open(chemin, "w", encoding="utf-8") as fichier:
@@ -133,6 +169,7 @@ def exporter_pv(campagne_apres, campagne_avant, racine=None):
         ecrire("=" * 78 + "\n\n")
         ecrire("Date            : %s\n" % campagne_apres.get("date", ""))
         ecrire("Operateur       : %s\n" % (campagne_apres.get("operateur") or "..."))
+        ecrire("N° de serie NVR : %s\n" % (campagne_apres.get("serie_nvr") or "..."))
         ecrire("Relevé avant    : %s\n" % campagne_avant.get("date", ""))
         ecrire("Nombre de MSA   : %s\n\n" % campagne_apres.get("nombre_msa", ""))
 
