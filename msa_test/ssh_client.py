@@ -226,3 +226,68 @@ class SessionMSA:
                 % (peripherique, self.hote, sortie.strip().splitlines()[-1:] or "")
             )
         return sortie
+
+    # ------------------------------------------------------------------ #
+    # Relevé des adresses MAC
+    # ------------------------------------------------------------------ #
+    def adresses_mac(self):
+        """Retourne les interfaces reseau de l'equipement et leur adresse MAC.
+
+        La lecture ne demande pas les droits root : elle passe par
+        /sys/class/net, avec repli sur `ip link` pour les systemes qui ne
+        l'exposent pas. Les interfaces sans adresse exploitable (boucle
+        locale, adresse nulle) sont ecartees.
+        """
+        sortie, _ = self.executer(
+            "for chemin in /sys/class/net/*; do "
+            "printf '%s %s\\n' \"${chemin##*/}\" "
+            "\"$(cat \"$chemin/address\" 2>/dev/null)\"; done",
+            delai=30,
+        )
+        interfaces = _parser_interfaces(sortie)
+        if not interfaces:
+            sortie, _ = self.executer("LC_ALL=C ip -o link show", delai=30)
+            interfaces = _parser_ip_link(sortie)
+        if not interfaces:
+            raise ErreurMSA(
+                "Aucune adresse MAC lisible sur %s." % self.hote
+            )
+        return interfaces
+
+
+_MAC = re.compile(r"^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$", re.IGNORECASE)
+_MAC_NULLE = "00:00:00:00:00:00"
+
+
+def _mac_exploitable(interface, mac):
+    """Ecarte la boucle locale et les adresses nulles."""
+    if interface in ("lo", "sit0") or not mac:
+        return False
+    return bool(_MAC.match(mac)) and mac.lower() != _MAC_NULLE
+
+
+def _parser_interfaces(sortie):
+    """Analyse les lignes "<interface> <mac>" produites depuis /sys/class/net."""
+    interfaces = []
+    for ligne in sortie.splitlines():
+        morceaux = ligne.split()
+        if len(morceaux) != 2:
+            continue
+        nom, mac = morceaux
+        if _mac_exploitable(nom, mac):
+            interfaces.append({"interface": nom, "mac": mac.lower()})
+    return interfaces
+
+
+def _parser_ip_link(sortie):
+    """Analyse la sortie de `ip -o link show` (repli)."""
+    interfaces = []
+    for ligne in sortie.splitlines():
+        # 2: eth0: <BROADCAST,...> mtu 1500 ... link/ether 00:11:22:33:44:55 brd ...
+        m = re.search(r"^\d+:\s*([^:@]+)[:@].*link/\w+\s+(\S+)", ligne)
+        if not m:
+            continue
+        nom, mac = m.group(1).strip(), m.group(2).strip()
+        if _mac_exploitable(nom, mac):
+            interfaces.append({"interface": nom, "mac": mac.lower()})
+    return interfaces

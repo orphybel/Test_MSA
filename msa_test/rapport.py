@@ -218,5 +218,55 @@ def exporter_pv(campagne_apres, campagne_avant, racine=None):
     return chemin, conforme
 
 
+def exporter_macs(campagne, racine=None):
+    """Ecrit le relevé des adresses MAC dans un fichier texte.
+
+    Retourne (chemin, nombre d'equipements en echec).
+    """
+    nom = "adresses_MAC%s_%s.txt" % (
+        fragment_nom(campagne.get("serie_nvr")),
+        _horodatage(campagne),
+    )
+    chemin = os.path.join(dossier_resultats(racine), nom)
+    echecs = 0
+
+    with open(chemin, "w", encoding="utf-8") as fichier:
+        ecrire = fichier.write
+        ecrire("RELEVE DES ADRESSES MAC\n")
+        ecrire("Equipement NVR - procedure X301773\n")
+        ecrire("=" * 78 + "\n\n")
+        ecrire("Date            : %s\n" % campagne.get("date", ""))
+        ecrire("N° de serie NVR : %s\n" % (campagne.get("serie_nvr") or "..."))
+        ecrire("Operateur       : %s\n" % (campagne.get("operateur") or "..."))
+        ecrire("Nombre de MSA   : %s\n" % campagne.get("nombre_msa", ""))
+        if not campagne.get("carte_switch_relevee"):
+            ecrire(
+                "\nCarte control switch : non relevée (identifiants non "
+                "renseignés).\n"
+            )
+        ecrire("\n")
+
+        for equipement in campagne.get("equipements", []):
+            ecrire("-" * 78 + "\n")
+            ecrire("%s (%s)\n" % (equipement["libelle"], equipement["ip"]))
+            if equipement.get("erreur"):
+                ecrire("  ECHEC : %s\n" % equipement["erreur"])
+                echecs += 1
+                continue
+            for interface in equipement["interfaces"]:
+                ecrire(
+                    "  %-12s %s\n" % (interface["interface"], interface["mac"])
+                )
+
+        ecrire("\n" + "=" * 78 + "\n")
+        if echecs:
+            ecrire(
+                "ATTENTION : %d equipement(s) n'ont pas pu etre relevés.\n" % echecs
+            )
+        else:
+            ecrire("Tous les equipements ont ete relevés.\n")
+    return chemin, echecs
+
+
 def libelle_phase(phase):
     return LIBELLE_PHASE.get(phase, phase)

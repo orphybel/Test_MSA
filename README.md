@@ -29,7 +29,8 @@ restent à la charge de l'opérateur.
      est réutilisé.
    - **N° de série du NVR** — repris dans le **nom de tous les fichiers
      produits**, dans l'en-tête du rapport, dans le PV et dans le CSV.
-   - *Optionnel* : port SSH et nom de l'opérateur (repris sur le PV).
+   - *Optionnel* : port SSH, nom de l'opérateur (repris sur le PV) et
+     identifiants de la carte control switch (relevé des adresses MAC).
 3. **Bouton 1 — Relevé AVANT enregistrement (étapes 12 à 15)** : l'application
    se connecte à chaque MSA, attend l'invite de mot de passe du `su`, passe en
    super-utilisateur, exécute les deux `smartctl` et affiche les RAW_VALUE. Le
@@ -42,6 +43,26 @@ restent à la charge de l'opérateur.
 
 Le bouton **Ouvrir le rapport visuel** réaffiche à tout moment le dernier
 rapport généré.
+
+## Relevé des adresses MAC
+
+Le bouton **Relever les adresses MAC** interroge, indépendamment des relevés
+SMART :
+
+- la **carte mère control switch**, dont l'adresse est celle qui précède
+  immédiatement la 1ʳᵉ adresse saisie (MSA0 `.187` → carte switch `.186`), avec
+  son **propre login et mot de passe** (champs dédiés) ;
+- chacun des modules MSA, avec les identifiants MSA.
+
+Toutes les interfaces réseau de chaque équipement sont listées avec leur
+adresse MAC dans un fichier texte
+(`adresses_MAC_<n° de série>_<horodatage>.txt`), ouvert en fin de relevé. Un
+équipement injoignable est reporté dans le fichier sans interrompre le relevé
+des autres.
+
+La lecture des adresses MAC ne nécessite pas les droits root : aucun `su`
+n'est effectué. Si le login de la carte control switch est laissé vide, seuls
+les modules MSA sont relevés et le fichier le mentionne.
 
 ## Rapport visuel
 
@@ -87,6 +108,7 @@ numéro n'est saisi :
 - `releves_*.csv` — tableau des RAW_VALUE (séparateur `;`, ouvrable dans Excel) ;
 - `PV_comparaison_*.txt` — synthèse avant/après avec la conclusion, à reporter
   sur le PV de test ;
+- `adresses_MAC_*.txt` — relevé des adresses MAC (voir ci-dessus) ;
 - `rapport_avant_*.html` / `rapport_avant_apres_*.html` — rapport visuel
   (voir ci-dessus), ouvert automatiquement en fin de campagne.
 
@@ -121,7 +143,8 @@ python main.py           # lancement de l'interface
 
 Organisation du code :
 
-- `msa_test/ssh_client.py` — session SSH, passage `su`, exécution `smartctl` ;
+- `msa_test/ssh_client.py` — session SSH, passage `su`, exécution `smartctl`,
+  lecture des adresses MAC ;
 - `msa_test/smart_parser.py` — extraction des RAW_VALUE ID#188 et ID#199 ;
 - `msa_test/campagne.py` — parcours des 1 à 6 MSA, comparaison avant/après et
   détection des valeurs non nulles ;

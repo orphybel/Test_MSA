@@ -23,6 +23,8 @@ from .campagne import (
     alertes_avant_apres,
     comparer,
     executer_campagne,
+    executer_campagne_mac,
+    ip_carte_switch,
     liste_ip,
 )
 
@@ -77,6 +79,8 @@ class Application(tk.Tk):
         self.var_port = tk.IntVar(value=22)
         self.var_operateur = tk.StringVar()
         self.var_serie = tk.StringVar()
+        self.var_login_switch = tk.StringVar()
+        self.var_mdp_switch = tk.StringVar()
 
         ttk.Label(cadre, text="1ere adresse IP (MSA0) *").grid(
             row=0, column=0, sticky="w", padx=8, pady=6
@@ -137,9 +141,27 @@ class Application(tk.Tk):
             row=3, column=3, sticky="w", columnspan=2, pady=(0, 8)
         )
 
+        ttk.Label(cadre, text="Login carte control switch").grid(
+            row=4, column=0, sticky="w", padx=8
+        )
+        ttk.Entry(cadre, textvariable=self.var_login_switch, width=20).grid(
+            row=4, column=1, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(cadre, text="Mot de passe carte switch").grid(
+            row=4, column=2, sticky="w", padx=8
+        )
+        ttk.Entry(cadre, textvariable=self.var_mdp_switch, width=20, show="*").grid(
+            row=4, column=3, sticky="w", columnspan=2, pady=(0, 8)
+        )
+        ttk.Label(
+            cadre,
+            text="utilisés uniquement pour le relevé des adresses MAC",
+            foreground="#555555",
+        ).grid(row=5, column=0, columnspan=6, sticky="w", padx=8)
+
         self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
         self.etiquette_apercu.grid(
-            row=4, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
+            row=6, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
         )
         self.var_ip.trace_add("write", lambda *_: self._rafraichir_apercu())
         self.var_nombre.trace_add("write", lambda *_: self._rafraichir_apercu())
@@ -162,6 +184,13 @@ class Application(tk.Tk):
             command=lambda: self._lancer(PHASE_APRES),
         )
         self.bouton_apres.pack(side="left", padx=6)
+
+        self.bouton_mac = ttk.Button(
+            cadre,
+            text="Relever les adresses MAC",
+            command=self._lancer_mac,
+        )
+        self.bouton_mac.pack(side="left", padx=6)
 
         self.bouton_arret = ttk.Button(
             cadre, text="Arreter", command=self._demander_arret, state="disabled"
@@ -266,8 +295,12 @@ class Application(tk.Tk):
         detail = "   ".join(
             "MSA%d = %s" % (index, adresse) for index, adresse in enumerate(ips)
         )
+        try:
+            switch = "control switch = %s   " % ip_carte_switch(self.var_ip.get())
+        except ValueError:
+            switch = ""
         self.etiquette_apercu.configure(
-            text="Adresses interrogées : " + detail, foreground="#00693e"
+            text="Adresses interrogées : " + switch + detail, foreground="#00693e"
         )
 
     # ------------------------------------------------------------------ #
@@ -288,6 +321,7 @@ class Application(tk.Tk):
         self.var_port.set(prefs.get("port", 22))
         self.var_operateur.set(prefs.get("operateur", ""))
         self.var_serie.set(prefs.get("serie_nvr", ""))
+        self.var_login_switch.set(prefs.get("login_switch", ""))
 
     def _enregistrer_preferences(self):
         prefs = {
@@ -297,6 +331,7 @@ class Application(tk.Tk):
             "port": int(self.var_port.get()),
             "operateur": self.var_operateur.get(),
             "serie_nvr": self.var_serie.get(),
+            "login_switch": self.var_login_switch.get(),
         }
         try:
             with open(self._chemin_preferences(), "w", encoding="utf-8") as fichier:
@@ -370,6 +405,8 @@ class Application(tk.Tk):
             "port": port,
             "operateur": self.var_operateur.get().strip(),
             "serie_nvr": self.var_serie.get().strip(),
+            "login_switch": self.var_login_switch.get().strip(),
+            "mot_de_passe_switch": self.var_mdp_switch.get(),
         }
 
     def _lancer(self, phase):
@@ -401,6 +438,77 @@ class Application(tk.Tk):
             target=self._executer, args=(config,), daemon=True
         )
         self.travail.start()
+
+    def _lancer_mac(self):
+        """Relève les adresses MAC de la carte control switch et des MSA."""
+        if self.travail is not None and self.travail.is_alive():
+            return
+        try:
+            config = self._lire_configuration(PHASE_AVANT)
+        except ValueError as err:
+            messagebox.showerror("Parametres incomplets", str(err))
+            return
+        if config["login_switch"] and not config["mot_de_passe_switch"]:
+            messagebox.showerror(
+                "Parametres incomplets",
+                "Renseigner le mot de passe de la carte control switch, ou "
+                "laisser son login vide pour ne relever que les MSA.",
+            )
+            return
+        if not config["login_switch"] and not messagebox.askyesno(
+            "Carte control switch",
+            "Aucun identifiant n'est renseigné pour la carte control switch : "
+            "son adresse MAC ne sera pas relevée.\n\nContinuer avec les seuls "
+            "modules MSA ?",
+        ):
+            return
+
+        self._enregistrer_preferences()
+        self.arret.clear()
+        self._basculer_boutons(actif=False)
+        self.etiquette_etat.configure(text="Relevé des adresses MAC en cours...")
+        self._tracer("")
+        self._tracer("=== Relevé des adresses MAC ===")
+
+        self.travail = threading.Thread(
+            target=self._executer_mac, args=(config,), daemon=True
+        )
+        self.travail.start()
+
+    def _executer_mac(self, config):
+        try:
+            campagne = executer_campagne_mac(
+                config, journal=self._tracer, arret=self.arret
+            )
+            chemin, echecs = rapport.exporter_macs(campagne, self.racine)
+            self._tracer("Adresses MAC enregistrees : %s" % chemin)
+            self.after(0, self._terminer_mac, chemin, echecs)
+        except Exception as err:
+            self._tracer("ERREUR : %s" % err)
+            self.after(0, self._echouer, err)
+
+    def _terminer_mac(self, chemin, echecs):
+        self._basculer_boutons(actif=True)
+        if echecs:
+            self.etiquette_etat.configure(
+                text="Adresses MAC : %d equipement(s) non relevé(s)." % echecs
+            )
+            messagebox.showwarning(
+                "Relevé des adresses MAC incomplet",
+                "%d equipement(s) n'ont pas pu etre relevés.\n\nFichier :\n%s"
+                % (echecs, chemin),
+            )
+        else:
+            self.etiquette_etat.configure(text="Adresses MAC relevées.")
+            messagebox.showinfo(
+                "Relevé des adresses MAC",
+                "Toutes les adresses MAC ont ete relevées.\n\nFichier :\n%s"
+                % chemin,
+            )
+        try:
+            webbrowser.open("file:///" + os.path.abspath(chemin))
+        except Exception as err:
+            self._tracer("Ouverture du fichier impossible : %s" % err)
 
     def _executer(self, config):
         try:
@@ -476,6 +584,7 @@ class Application(tk.Tk):
         etat = "normal" if actif else "disabled"
         self.bouton_avant.configure(state=etat)
         self.bouton_apres.configure(state=etat)
+        self.bouton_mac.configure(state=etat)
         self.bouton_arret.configure(state="disabled" if actif else "normal")
 
     # ------------------------------------------------------------------ #

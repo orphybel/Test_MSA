@@ -29,6 +29,24 @@ LIBELLE_PHASE = {
 }
 
 
+def ip_carte_switch(premiere_ip):
+    """Adresse de la carte mere control switch : premiere IP moins 1.
+
+    La carte de controle du switch precede immediatement le MSA0 dans le plan
+    d'adressage du NVR (Figure 12 : MSA0 = .187, carte switch = .186).
+    """
+    try:
+        base = ipaddress.IPv4Address(str(premiere_ip).strip())
+    except (ipaddress.AddressValueError, ValueError):
+        raise ValueError("Adresse IP invalide : %r" % premiere_ip)
+    if int(base) == 0:
+        raise ValueError(
+            "Aucune adresse ne precede %s : la carte control switch est "
+            "introuvable." % base
+        )
+    return str(base - 1)
+
+
 def liste_ip(premiere_ip, nombre):
     """Etape 15 : une IP par module MSA, incrementee de 1 (cf. Figure 12).
 
@@ -252,3 +270,97 @@ def alertes_avant_apres(campagne_avant, campagne_apres=None):
         if module:
             modules.append(module)
     return alertes_valeurs_non_nulles({"modules": modules})
+
+
+# ---------------------------------------------------------------------- #
+# Relevé des adresses MAC
+# ---------------------------------------------------------------------- #
+def relever_mac(libelle, ip, login, mot_de_passe, port, journal):
+    """Relevé des adresses MAC d'un equipement (MSA ou carte control switch).
+
+    La lecture des adresses MAC ne demande pas les droits root : aucun `su`
+    n'est effectue ici.
+    """
+    resultat = {
+        "libelle": libelle,
+        "ip": ip,
+        "interfaces": [],
+        "erreur": None,
+        "horodatage": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        journal("%s (%s) : connexion SSH..." % (libelle, ip))
+        with SessionMSA(ip, login, mot_de_passe, None, port) as session:
+            resultat["interfaces"] = session.adresses_mac()
+        for interface in resultat["interfaces"]:
+            journal(
+                "%s (%s) : %s = %s"
+                % (libelle, ip, interface["interface"], interface["mac"])
+            )
+    except ErreurMSA as err:
+        resultat["erreur"] = str(err)
+        journal("%s (%s) : ECHEC - %s" % (libelle, ip, err))
+    except Exception as err:  # un equipement en echec n'arrete pas le relevé
+        resultat["erreur"] = "Erreur inattendue : %s" % err
+        journal("%s (%s) : ECHEC - %s" % (libelle, ip, err))
+    return resultat
+
+
+def equipements_mac(config):
+    """Liste des equipements a interroger : carte control switch puis MSA.
+
+    La carte control switch n'est incluse que si ses identifiants sont
+    renseignes ; elle utilise un compte distinct de celui des MSA.
+    """
+    equipements = []
+    login_switch = (config.get("login_switch") or "").strip()
+    if login_switch:
+        equipements.append(
+            {
+                "libelle": "Carte control switch",
+                "ip": ip_carte_switch(config["premiere_ip"]),
+                "login": login_switch,
+                "mot_de_passe": config.get("mot_de_passe_switch", ""),
+            }
+        )
+    for numero, ip in enumerate(liste_ip(config["premiere_ip"], config["nombre_msa"])):
+        equipements.append(
+            {
+                "libelle": "MSA%d" % numero,
+                "ip": ip,
+                "login": config["login"],
+                "mot_de_passe": config["mot_de_passe"],
+            }
+        )
+    return equipements
+
+
+def executer_campagne_mac(config, journal, sur_resultat=None, arret=None):
+    """Relève les adresses MAC de la carte control switch et des MSA."""
+    equipements = equipements_mac(config)
+    campagne = {
+        "type": "mac",
+        "premiere_ip": config["premiere_ip"],
+        "nombre_msa": config["nombre_msa"],
+        "operateur": config.get("operateur", ""),
+        "serie_nvr": config.get("serie_nvr", ""),
+        "carte_switch_relevee": bool((config.get("login_switch") or "").strip()),
+        "date": datetime.datetime.now().isoformat(timespec="seconds"),
+        "equipements": [],
+    }
+    for equipement in equipements:
+        if arret is not None and arret.is_set():
+            journal("Relevé des adresses MAC interrompu par l'operateur.")
+            break
+        resultat = relever_mac(
+            equipement["libelle"],
+            equipement["ip"],
+            equipement["login"],
+            equipement["mot_de_passe"],
+            config.get("port", 22),
+            journal,
+        )
+        campagne["equipements"].append(resultat)
+        if sur_resultat is not None:
+            sur_resultat(resultat)
+    return campagne
