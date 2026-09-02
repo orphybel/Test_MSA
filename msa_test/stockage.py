@@ -13,8 +13,10 @@ verifier que la capacite totale de chaque MSA est suffisante.
 """
 
 import json
+import re
 
 import requests
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 DELAI_HTTP = 20  # secondes
 PORT_STOCKAGE = 8080
@@ -91,20 +93,49 @@ def analyser_reponse(texte):
     }
 
 
+def schemas_annonces(reponse):
+    """Schemas d'authentification annonces par l'en-tete WWW-Authenticate."""
+    entete = reponse.headers.get("WWW-Authenticate", "")
+    return {mot.lower() for mot in re.findall(r"^\s*(\w+)|,\s*(\w+)\s+realm", entete) for mot in mot if mot}
+
+
+def _defi(reponse):
+    """Resume l'en-tete d'authentification, pour le diagnostic."""
+    entete = reponse.headers.get("WWW-Authenticate", "")
+    return entete.strip()[:80] if entete else "aucun en-tete WWW-Authenticate"
+
+
 def interroger(ip, port=PORT_STOCKAGE, login=LOGIN_REST, mot_de_passe=MOT_DE_PASSE_REST):
     """Envoie la requete GET /storage/status et retourne la capacite lue.
 
-    L'interface REST des modules demande une authentification : les
-    identifiants sont envoyes des la premiere requete, certains services
-    repondant 401 sans annoncer d'en-tete d'authentification.
+    L'interface REST des modules demande une authentification. Le compte est
+    d'abord presente en HTTP Basic, des la premiere requete : certains
+    services repondent 401 sans annoncer d'en-tete d'authentification. Si le
+    module refuse et reclame du Digest, la requete est rejouee avec ce
+    schema, qui negocie son propre defi.
     """
     url = url_stockage(ip, port)
-    authentification = (login, mot_de_passe or "") if login else None
+    mot_de_passe = mot_de_passe or ""
     try:
-        reponse = requests.get(url, timeout=DELAI_HTTP, auth=authentification)
+        reponse = requests.get(
+            url,
+            timeout=DELAI_HTTP,
+            auth=HTTPBasicAuth(login, mot_de_passe) if login else None,
+        )
+        if reponse.status_code == 401 and login:
+            schemas = schemas_annonces(reponse)
+            # Sans annonce exploitable, le Digest est tente malgre tout :
+            # c'est le seul autre schema courant sur ces equipements.
+            if "digest" in schemas or not schemas:
+                reponse = requests.get(
+                    url,
+                    timeout=DELAI_HTTP,
+                    auth=HTTPDigestAuth(login, mot_de_passe),
+                )
         if reponse.status_code in (401, 403):
             raise ErreurStockage(
-                "identifiants REST refuses (HTTP %d)" % reponse.status_code
+                "identifiants REST refuses (HTTP %d, le module annonce : %s)"
+                % (reponse.status_code, _defi(reponse))
             )
         reponse.raise_for_status()
     except requests.exceptions.ConnectionError:

@@ -16,6 +16,7 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import requests
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 
 DELAI_HTTP = 20  # secondes
 
@@ -396,13 +397,24 @@ def recuperer_page(url, login, mot_de_passe, session=None, verifier_tls=False):
     try:
         reponse = session.get(url, timeout=DELAI_HTTP, verify=verifier_tls)
         if reponse.status_code == 401:
-            reponse = session.get(
-                url, timeout=DELAI_HTTP, verify=verifier_tls,
-                auth=(login, mot_de_passe),
-            )
+            # HTTP Basic d'abord, puis Digest si le serveur le reclame : les
+            # deux affichent la meme fenetre de connexion dans le navigateur.
+            annonce = reponse.headers.get("WWW-Authenticate", "").strip()
+            for authentification in (
+                HTTPBasicAuth(login, mot_de_passe),
+                HTTPDigestAuth(login, mot_de_passe),
+            ):
+                reponse = session.get(
+                    url, timeout=DELAI_HTTP, verify=verifier_tls,
+                    auth=authentification,
+                )
+                if reponse.status_code != 401:
+                    break
             if reponse.status_code == 401:
                 raise ErreurWeb(
-                    "Identifiants refusés par l'interface web (%s)." % url
+                    "Identifiants refusés par l'interface web (%s). Le serveur "
+                    "annonce : %s"
+                    % (url, annonce[:80] or "aucun en-tete WWW-Authenticate")
                 )
         reponse.raise_for_status()
 

@@ -57,7 +57,11 @@ GET http://<adresse du MSA>:8080/storage/status
 
 L'interface REST des modules demande une authentification : les champs
 **Login REST** et **Mot de passe REST** sont pré-remplis avec le compte
-`rest` / `rest1234` et les identifiants sont envoyés dès la première requête.
+`rest` / `rest1234`. Le compte est présenté en **HTTP Basic** dès la première
+requête ; si le module répond 401 en réclamant du **Digest**, la requête est
+rejouée avec ce schéma. Les deux affichent la même fenêtre de connexion dans
+le navigateur, on ne peut donc pas les distinguer à l'œil. En cas de refus, le
+message d'erreur cite l'en-tête `WWW-Authenticate` renvoyé par le module.
 
 La valeur `capacity` de la réponse JSON est relevée et affichée en Ko, avec ses
 équivalents en Mo et Go (exemple de la procédure : `3 755 205 Ko`), ainsi que

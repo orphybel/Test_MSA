@@ -170,3 +170,27 @@ def test_sans_minimum_le_fichier_le_signale(tmp_path):
     assert anomalies == 0
     assert "non renseignée" in contenu
     assert "a reporter sur la Fiche de Test" in contenu
+
+
+# ---------------------------------------------------------------------- #
+# Schema d'authentification annonce par le module
+# ---------------------------------------------------------------------- #
+class _Reponse:
+    def __init__(self, entete=None):
+        self.headers = {"WWW-Authenticate": entete} if entete else {}
+
+
+@pytest.mark.parametrize(
+    "entete,attendu",
+    [
+        ('Basic realm="REST"', {"basic"}),
+        ('Digest realm="NVR", qop="auth", nonce="abc"', {"digest"}),
+        ('Basic realm="a", Digest realm="b"', {"basic", "digest"}),
+        (None, set()),
+    ],
+)
+def test_lecture_du_schema_annonce(entete, attendu):
+    """Basic et Digest affichent la meme fenetre dans le navigateur."""
+    from msa_test.stockage import schemas_annonces
+
+    assert schemas_annonces(_Reponse(entete)) == attendu
