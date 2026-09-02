@@ -2,6 +2,7 @@
 
 import csv
 import datetime
+import ipaddress
 import glob
 import json
 import os
@@ -218,6 +219,19 @@ def exporter_pv(campagne_apres, campagne_avant, racine=None):
     return chemin, conforme
 
 
+def _cle_ip(equipement):
+    """Ordonne les equipements par adresse IP croissante."""
+    try:
+        return (0, int(ipaddress.IPv4Address(equipement["ip"])))
+    except (ipaddress.AddressValueError, ValueError, KeyError):
+        return (1, 0)
+
+
+def _tries_par_ip(equipements):
+    """Carte control switch (.186) puis MSA0 (.187), MSA1 (.188)..."""
+    return sorted(equipements, key=_cle_ip)
+
+
 def exporter_macs(campagne, racine=None):
     """Ecrit le relevé des adresses MAC dans un fichier texte.
 
@@ -246,7 +260,24 @@ def exporter_macs(campagne, racine=None):
             )
         ecrire("\n")
 
-        for equipement in campagne.get("equipements", []):
+        # Recapitulatif : une ligne par equipement, dans l'ordre des adresses.
+        equipements = _tries_par_ip(campagne.get("equipements", []))
+        ecrire("RECAPITULATIF\n")
+        ecrire("-" * 78 + "\n")
+        ecrire("%-16s %-24s %s\n" % ("ADRESSE IP", "EQUIPEMENT", "ADRESSE(S) MAC"))
+        for equipement in equipements:
+            if equipement.get("erreur"):
+                macs = "NON RELEVE"
+            else:
+                macs = ", ".join(i["mac"] for i in equipement["interfaces"]) or "aucune"
+            ecrire(
+                "%-16s %-24s %s\n"
+                % (equipement["ip"], equipement["libelle"], macs)
+            )
+        ecrire("\n")
+
+        ecrire("DETAIL PAR EQUIPEMENT\n")
+        for equipement in equipements:
             ecrire("-" * 78 + "\n")
             ecrire("%s (%s)\n" % (equipement["libelle"], equipement["ip"]))
             if equipement.get("erreur"):

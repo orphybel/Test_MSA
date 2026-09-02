@@ -158,3 +158,50 @@ def test_la_carte_switch_non_relevee_est_signalee(tmp_path):
     campagne["equipements"] = campagne["equipements"][1:]
     contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
     assert "Carte control switch : non relevée" in contenu
+
+
+def test_le_recapitulatif_suit_l_ordre_des_adresses(tmp_path):
+    """Carte control switch (.186) puis MSA0 (.187), MSA1 (.188)..."""
+    campagne = _campagne(nombre_msa=2)
+    campagne["equipements"] = [
+        {
+            "libelle": "MSA1",
+            "ip": "192.168.0.188",
+            "erreur": None,
+            "interfaces": [{"interface": "eth0", "mac": "aa:bb:cc:dd:ee:02"}],
+        },
+        {
+            "libelle": "Carte control switch",
+            "ip": "192.168.0.186",
+            "erreur": None,
+            "interfaces": [{"interface": "eth0", "mac": "00:11:22:33:44:55"}],
+        },
+        {
+            "libelle": "MSA0",
+            "ip": "192.168.0.187",
+            "erreur": None,
+            "interfaces": [{"interface": "eth0", "mac": "aa:bb:cc:dd:ee:01"}],
+        },
+    ]
+    contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
+
+    recapitulatif = contenu.split("RECAPITULATIF")[1].split("DETAIL")[0]
+    ordre = [
+        ligne.split()[1] for ligne in recapitulatif.splitlines() if ligne.startswith("192.")
+    ]
+    assert ordre == ["Carte", "MSA0", "MSA1"]  # "Carte control switch"
+    assert recapitulatif.index("192.168.0.186") < recapitulatif.index("192.168.0.187")
+    assert recapitulatif.index("192.168.0.187") < recapitulatif.index("192.168.0.188")
+
+    # le detail suit le meme ordre
+    detail = contenu.split("DETAIL PAR EQUIPEMENT")[1]
+    assert detail.index("Carte control switch") < detail.index("MSA0 (")
+    assert detail.index("MSA0 (") < detail.index("MSA1 (")
+
+
+def test_le_recapitulatif_liste_les_equipements_en_echec(tmp_path):
+    campagne = _campagne()
+    campagne["equipements"][1].update(erreur="Connexion impossible", interfaces=[])
+    contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
+    recapitulatif = contenu.split("RECAPITULATIF")[1].split("DETAIL")[0]
+    assert "NON RELEVE" in recapitulatif

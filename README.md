@@ -56,9 +56,12 @@ SMART :
 
 Toutes les interfaces réseau de chaque équipement sont listées avec leur
 adresse MAC dans un fichier texte
-(`adresses_MAC_<n° de série>_<horodatage>.txt`), ouvert en fin de relevé. Un
-équipement injoignable est reporté dans le fichier sans interrompre le relevé
-des autres.
+(`adresses_MAC_<n° de série>_<horodatage>.txt`), ouvert en fin de relevé.
+
+Le fichier commence par un **récapitulatif trié par adresse IP** (carte switch
+`.186`, puis MSA0 `.187`, MSA1 `.188`…), suivi du détail interface par
+interface dans le même ordre. Un équipement injoignable apparaît en
+`NON RELEVE` dans le récapitulatif, sans interrompre le relevé des autres.
 
 La lecture des adresses MAC ne nécessite pas les droits root : aucun `su`
 n'est effectué. Si le login de la carte control switch est laissé vide, seuls
@@ -97,7 +100,12 @@ l'application peut être fermée pendant les 2 h d'enregistrement.
 
 ## Fichiers produits
 
-Créés dans le sous-dossier `resultats_msa\` situé à côté de l'exécutable. Le
+Créés dans le sous-dossier `resultats_msa\` situé à côté de l'exécutable. Son
+chemin complet est affiché en bas de la fenêtre, et le bouton **Ouvrir le
+dossier des résultats** l'ouvre dans l'explorateur. Si l'exécutable est placé
+dans un dossier protégé (Program Files, partage réseau en lecture seule),
+l'application se rabat sur `Documents\TestMSA\` — le chemin affiché indique
+toujours l'emplacement réellement utilisé. Le
 n° de série du NVR est inséré dans chaque nom de fichier (par exemple
 `rapport_avant_apres_NVR-MP14-2026-0087_2026-08-21_11-22-47.html`) ; les
 caractères refusés par Windows sont remplacés et le nom reste valide si aucun

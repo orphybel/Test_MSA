@@ -7,13 +7,13 @@ Automatise les etapes 12 a 15 (relevé avant enregistrement) et l'etape 24
 import json
 import os
 import queue
-import sys
 import threading
 import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from . import __version__, rapport, rapport_html
+from .chemins import ouvrir_dans_l_explorateur, racine_application
 from .smart_parser import valeur_est_nulle
 from .campagne import (
     NB_MSA_MAX,
@@ -30,13 +30,6 @@ from .campagne import (
 
 FICHIER_PREFS = "preferences_msa.json"
 IP_PAR_DEFAUT = "192.168.0.187"
-
-
-def racine_application():
-    """Dossier de l'executable (ou du script) : les rapports y sont ecrits."""
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.getcwd()
 
 
 class Application(tk.Tk):
@@ -264,6 +257,19 @@ class Application(tk.Tk):
         pied.pack(fill="x", padx=10, pady=(0, 8))
         self.etiquette_etat = ttk.Label(pied, text="Pret. Version %s" % __version__)
         self.etiquette_etat.pack(side="left")
+
+        ttk.Button(
+            pied,
+            text="Ouvrir le dossier des resultats",
+            command=self._ouvrir_dossier_resultats,
+        ).pack(side="right")
+
+        dossier = rapport.dossier_resultats(self.racine)
+        chemin_affiche = ttk.Entry(pied, width=70)
+        chemin_affiche.insert(0, dossier)
+        chemin_affiche.configure(state="readonly")
+        chemin_affiche.pack(side="right", padx=8)
+        ttk.Label(pied, text="Fichiers produits dans :").pack(side="right")
 
     # ------------------------------------------------------------------ #
     # Journal et etat
@@ -506,7 +512,7 @@ class Application(tk.Tk):
                 % chemin,
             )
         try:
-            webbrowser.open("file:///" + os.path.abspath(chemin))
+            ouvrir_dans_l_explorateur(chemin)
         except Exception as err:
             self._tracer("Ouverture du fichier impossible : %s" % err)
 
@@ -570,6 +576,18 @@ class Application(tk.Tk):
             webbrowser.open("file:///" + os.path.abspath(self.dernier_rapport))
         except Exception as err:
             self._tracer("Ouverture du navigateur impossible : %s" % err)
+
+    def _ouvrir_dossier_resultats(self):
+        dossier = rapport.dossier_resultats(self.racine)
+        self._tracer("Dossier des resultats : %s" % dossier)
+        try:
+            ouvrir_dans_l_explorateur(dossier)
+        except Exception as err:
+            messagebox.showinfo(
+                "Dossier des resultats",
+                "Ouverture automatique impossible (%s).\n\nLes fichiers sont "
+                "ici :\n%s" % (err, dossier),
+            )
 
     def _echouer(self, err):
         self._basculer_boutons(actif=True)
