@@ -60,7 +60,7 @@ def _campagne(phase="avant", serie="NVR-2026-017"):
         "date": "2026-08-21T09:00:00",
         "operateur": "J. DURAND",
         "serie_nvr": serie,
-        "premiere_ip": "192.168.0.187",
+        "ip_switch": "192.168.0.186",
         "nombre_msa": 1,
         "modules": [
             {

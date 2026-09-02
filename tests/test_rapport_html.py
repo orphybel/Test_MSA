@@ -37,7 +37,7 @@ def _campagne(modules, phase="avant"):
         "date": "2026-08-21T09:00:00",
         "operateur": "J. DURAND",
         "numero_msa": "MSA-1",
-        "premiere_ip": "192.168.0.187",
+        "ip_switch": "192.168.0.186",
         "nombre_msa": len(modules),
         "modules": modules,
     }

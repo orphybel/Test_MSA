@@ -31,38 +31,33 @@ LIBELLE_PHASE = {
 }
 
 
-def ip_carte_switch(premiere_ip):
-    """Adresse de la carte mere control switch : premiere IP moins 1.
-
-    La carte de controle du switch precede immediatement le MSA0 dans le plan
-    d'adressage du NVR (Figure 12 : MSA0 = .187, carte switch = .186).
-    """
+def valider_ip(ip_switch):
+    """Controle l'adresse saisie pour la carte Controle/Switch."""
     try:
-        base = ipaddress.IPv4Address(str(premiere_ip).strip())
+        return ipaddress.IPv4Address(str(ip_switch).strip())
     except (ipaddress.AddressValueError, ValueError):
-        raise ValueError("Adresse IP invalide : %r" % premiere_ip)
-    if int(base) == 0:
-        raise ValueError(
-            "Aucune adresse ne precede %s : la carte control switch est "
-            "introuvable." % base
-        )
-    return str(base - 1)
+        raise ValueError("Adresse IP invalide : %r" % ip_switch)
 
 
-def liste_ip(premiere_ip, nombre):
-    """Etape 15 : une IP par module MSA, incrementee de 1 (cf. Figure 12).
+def liste_ip(ip_switch, nombre):
+    """Etape 15 : une adresse par module MSA, a partir de la carte Controle/Switch.
 
-    MSA0 = premiere IP saisie, MSA1 = +1, ... jusqu'a MSA5.
+    Le plan d'adressage du NVR part de la carte Controle/Switch et s'incremente
+    de 1 par module implante : MSA0 = adresse de la carte + 1, MSA1 = +2, et
+    ainsi de suite jusqu'a MSA5.
     """
     if not 1 <= nombre <= NB_MSA_MAX:
         raise ValueError(
             "Le nombre de MSA doit etre compris entre 1 et %d." % NB_MSA_MAX
         )
-    try:
-        base = ipaddress.IPv4Address(premiere_ip.strip())
-    except (ipaddress.AddressValueError, ValueError):
-        raise ValueError("Adresse IP invalide : %r" % premiere_ip)
-    return [str(base + i) for i in range(nombre)]
+    base = valider_ip(ip_switch)
+    dernier = int(base) + nombre
+    if dernier > int(ipaddress.IPv4Address("255.255.255.255")):
+        raise ValueError(
+            "Le plan d'adressage depasse la derniere adresse IPv4 a partir "
+            "de %s." % base
+        )
+    return [str(base + i) for i in range(1, nombre + 1)]
 
 
 def relever_msa(msa, ip, login, mot_de_passe, mot_de_passe_root, port, journal):
@@ -123,11 +118,11 @@ def relever_msa(msa, ip, login, mot_de_passe, mot_de_passe_root, port, journal):
 
 def executer_campagne(config, journal, sur_resultat=None, arret=None):
     """Parcourt les modules MSA et retourne la campagne complete."""
-    ips = liste_ip(config["premiere_ip"], config["nombre_msa"])
+    ips = liste_ip(config["ip_switch"], config["nombre_msa"])
     campagne = {
         "phase": config["phase"],
         "libelle_phase": LIBELLE_PHASE[config["phase"]],
-        "premiere_ip": config["premiere_ip"],
+        "ip_switch": config["ip_switch"],
         "nombre_msa": config["nombre_msa"],
         "operateur": config.get("operateur", ""),
         "serie_nvr": config.get("serie_nvr", ""),
@@ -320,10 +315,10 @@ def relever_mac_switch_web(config, journal):
     ceux de l'interface web le sont : la page qui affiche les adresses est
     alors lue directement en HTTP.
     """
-    ip = ip_carte_switch(config["premiere_ip"])
+    ip = str(valider_ip(config["ip_switch"]))
     url = normaliser_url(config.get("url_web"), ip)
     resultat = {
-        "libelle": "Carte control switch",
+        "libelle": "Carte Controle/Switch",
         "ip": ip,
         "url": url,
         "source": "interface web",
@@ -347,7 +342,7 @@ def relever_mac_switch_web(config, journal):
 def equipements_mac(config):
     """Liste des equipements a interroger : carte control switch puis MSA.
 
-    La carte control switch n'y figure que lorsqu'elle est relevée en SSH :
+    La carte Controle/Switch n'y figure que lorsqu'elle est relevée en SSH :
     par defaut elle passe par son interface web, traitee separement.
     """
     equipements = []
@@ -355,14 +350,14 @@ def equipements_mac(config):
     if config.get("source_switch", SOURCE_SWITCH_WEB) == SOURCE_SWITCH_SSH and login_switch:
         equipements.append(
             {
-                "libelle": "Carte control switch",
-                "ip": ip_carte_switch(config["premiere_ip"]),
+                "libelle": "Carte Controle/Switch",
+                "ip": str(valider_ip(config["ip_switch"])),
                 "login": login_switch,
                 "mot_de_passe": config.get("mot_de_passe_switch", ""),
                 "source": "SSH",
             }
         )
-    for numero, ip in enumerate(liste_ip(config["premiere_ip"], config["nombre_msa"])):
+    for numero, ip in enumerate(liste_ip(config["ip_switch"], config["nombre_msa"])):
         equipements.append(
             {
                 "libelle": "MSA%d" % numero,
@@ -381,7 +376,7 @@ def executer_campagne_mac(config, journal, sur_resultat=None, arret=None):
     equipements = equipements_mac(config)
     campagne = {
         "type": "mac",
-        "premiere_ip": config["premiere_ip"],
+        "ip_switch": config["ip_switch"],
         "nombre_msa": config["nombre_msa"],
         "operateur": config.get("operateur", ""),
         "serie_nvr": config.get("serie_nvr", ""),
@@ -435,7 +430,7 @@ def campagne_mac_depuis_page(chemin, config, journal):
                 % (interface["interface"], interface["mac"]))
     return {
         "type": "mac",
-        "premiere_ip": config.get("premiere_ip", ""),
+        "ip_switch": config.get("ip_switch", ""),
         "nombre_msa": config.get("nombre_msa", 0),
         "operateur": config.get("operateur", ""),
         "serie_nvr": config.get("serie_nvr", ""),
@@ -444,8 +439,8 @@ def campagne_mac_depuis_page(chemin, config, journal):
         "equipements": [
             {
                 "libelle": "Interface web du NVR",
-                "ip": ip_carte_switch(config["premiere_ip"])
-                if config.get("premiere_ip")
+                "ip": str(valider_ip(config["ip_switch"]))
+                if config.get("ip_switch")
                 else "",
                 "url": os.path.basename(chemin),
                 "source": "page enregistrée",

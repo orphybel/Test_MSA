@@ -7,34 +7,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest
 
-from msa_test.campagne import equipements_mac, ip_carte_switch
+from msa_test.campagne import equipements_mac
 from msa_test.rapport import exporter_macs
 from msa_test.ssh_client import _parser_interfaces, _parser_ip_link
-
-
-# ---------------------------------------------------------------------- #
-# Adressage de la carte control switch
-# ---------------------------------------------------------------------- #
-def test_la_carte_switch_precede_le_premier_msa():
-    assert ip_carte_switch("192.168.0.187") == "192.168.0.186"
-
-
-def test_la_carte_switch_suit_la_premiere_ip_saisie():
-    assert ip_carte_switch("10.20.30.100") == "10.20.30.99"
-
-
-def test_le_changement_de_sous_reseau_est_respecte():
-    assert ip_carte_switch("192.168.1.0") == "192.168.0.255"
-
-
-def test_adresse_invalide_refusee():
-    with pytest.raises(ValueError):
-        ip_carte_switch("192.168.0")
-
-
-def test_aucune_adresse_avant_la_premiere():
-    with pytest.raises(ValueError):
-        ip_carte_switch("0.0.0.0")
 
 
 # ---------------------------------------------------------------------- #
@@ -42,7 +17,7 @@ def test_aucune_adresse_avant_la_premiere():
 # ---------------------------------------------------------------------- #
 def _config(**extra):
     config = {
-        "premiere_ip": "192.168.0.187",
+        "ip_switch": "192.168.0.186",
         "nombre_msa": 3,
         "login": "operateur",
         "mot_de_passe": "motdepasse",
@@ -57,13 +32,13 @@ def _config(**extra):
 def test_la_carte_switch_est_interrogee_en_premier_avec_son_compte():
     equipements = equipements_mac(_config())
     assert [e["libelle"] for e in equipements] == [
-        "Carte control switch",
+        "Carte Controle/Switch",
         "MSA0",
         "MSA1",
         "MSA2",
     ]
     switch = equipements[0]
-    assert switch["ip"] == "192.168.0.186"
+    assert switch["ip"] == "192.168.0.186"  # l'adresse saisie elle-meme
     assert switch["login"] == "admin" and switch["mot_de_passe"] == "autre"
     assert all(e["login"] == "operateur" for e in equipements[1:])
 
@@ -115,7 +90,7 @@ def _campagne(**extra):
         "source_switch": "web",
         "equipements": [
             {
-                "libelle": "Carte control switch",
+                "libelle": "Carte Controle/Switch",
                 "ip": "192.168.0.186",
                 "erreur": None,
                 "interfaces": [{"interface": "eth0", "mac": "00:11:22:33:44:55"}],
@@ -137,7 +112,7 @@ def test_le_fichier_contient_chaque_equipement(tmp_path):
     contenu = open(chemin, encoding="utf-8").read()
     assert echecs == 0
     assert "NVR-2026-017" in os.path.basename(chemin)
-    assert "Carte control switch (192.168.0.186)" in contenu
+    assert "Carte Controle/Switch (192.168.0.186)" in contenu
     assert "00:11:22:33:44:55" in contenu
     assert "MSA0 (192.168.0.187)" in contenu
     assert "aa:bb:cc:dd:ee:ff" in contenu
@@ -158,7 +133,7 @@ def test_la_carte_switch_non_relevee_est_signalee(tmp_path):
     campagne = _campagne(source_switch="aucune")
     campagne["equipements"] = campagne["equipements"][1:]
     contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
-    assert "Carte control switch : non relevée" in contenu
+    assert "Carte Controle/Switch : non relevée" in contenu
 
 
 def test_la_source_de_chaque_equipement_est_indiquee(tmp_path):
@@ -172,7 +147,7 @@ def test_la_source_de_chaque_equipement_est_indiquee(tmp_path):
 
 
 def test_le_recapitulatif_suit_l_ordre_des_adresses(tmp_path):
-    """Carte control switch (.186) puis MSA0 (.187), MSA1 (.188)..."""
+    """Carte Controle/Switch (.186) puis MSA0 (.187), MSA1 (.188)..."""
     campagne = _campagne(nombre_msa=2)
     campagne["equipements"] = [
         {
@@ -182,7 +157,7 @@ def test_le_recapitulatif_suit_l_ordre_des_adresses(tmp_path):
             "interfaces": [{"interface": "eth0", "mac": "aa:bb:cc:dd:ee:02"}],
         },
         {
-            "libelle": "Carte control switch",
+            "libelle": "Carte Controle/Switch",
             "ip": "192.168.0.186",
             "erreur": None,
             "interfaces": [{"interface": "eth0", "mac": "00:11:22:33:44:55"}],
@@ -198,16 +173,32 @@ def test_le_recapitulatif_suit_l_ordre_des_adresses(tmp_path):
 
     recapitulatif = contenu.split("RECAPITULATIF")[1].split("DETAIL")[0]
     ordre = [
-        ligne.split()[1] for ligne in recapitulatif.splitlines() if ligne.startswith("192.")
+        ligne.split()[0]
+        for ligne in recapitulatif.splitlines()
+        if ligne.startswith(("Carte", "MSA"))
     ]
-    assert ordre == ["Carte", "MSA0", "MSA1"]  # "Carte control switch"
+    assert ordre == ["Carte", "MSA0", "MSA1"]  # "Carte Controle/Switch" en tete
     assert recapitulatif.index("192.168.0.186") < recapitulatif.index("192.168.0.187")
     assert recapitulatif.index("192.168.0.187") < recapitulatif.index("192.168.0.188")
 
     # le detail suit le meme ordre
     detail = contenu.split("DETAIL PAR EQUIPEMENT")[1]
-    assert detail.index("Carte control switch") < detail.index("MSA0 (")
+    assert detail.index("Carte Controle/Switch") < detail.index("MSA0 (")
     assert detail.index("MSA0 (") < detail.index("MSA1 (")
+
+
+def test_une_ligne_de_recapitulatif_par_adresse(tmp_path):
+    """Une carte qui expose plusieurs modules occupe autant de lignes."""
+    campagne = _campagne()
+    campagne["equipements"][0]["interfaces"] = [
+        {"interface": "NVR - Module Contrôle Switch", "mac": "00:10:02:0f:d7:d7"},
+        {"interface": "NVR - Module CPU Enregistreur 0", "mac": "00:e0:4b:7b:e8:0a"},
+    ]
+    contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
+    recapitulatif = contenu.split("RECAPITULATIF")[1].split("DETAIL")[0]
+    assert "NVR - Module Contrôle Switch" in recapitulatif
+    assert "NVR - Module CPU Enregistreur 0" in recapitulatif
+    assert recapitulatif.count("00:e0:4b:7b:e8:0a") == 1
 
 
 def test_le_recapitulatif_liste_les_equipements_en_echec(tmp_path):

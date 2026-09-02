@@ -13,8 +13,9 @@ from msa_test.campagne import (
 )
 
 
-def test_ip_incrementees_selon_la_figure_12():
-    assert liste_ip("192.168.0.187", 6) == [
+def test_les_msa_suivent_la_carte_controle_switch():
+    """L'adresse saisie est celle de la carte : MSA0 = +1, MSA1 = +2..."""
+    assert liste_ip("192.168.0.186", 6) == [
         "192.168.0.187",
         "192.168.0.188",
         "192.168.0.189",
@@ -24,14 +25,27 @@ def test_ip_incrementees_selon_la_figure_12():
     ]
 
 
-def test_premiere_ip_libre():
-    assert liste_ip("10.1.2.250", 3) == ["10.1.2.250", "10.1.2.251", "10.1.2.252"]
+def test_adresse_de_la_carte_libre():
+    assert liste_ip("10.1.2.250", 3) == ["10.1.2.251", "10.1.2.252", "10.1.2.253"]
+
+
+def test_changement_de_sous_reseau():
+    assert liste_ip("192.168.0.254", 3) == [
+        "192.168.0.255",
+        "192.168.1.0",
+        "192.168.1.1",
+    ]
+
+
+def test_plan_d_adressage_hors_bornes():
+    with pytest.raises(ValueError):
+        liste_ip("255.255.255.253", 6)
 
 
 @pytest.mark.parametrize("nombre", [0, 7, -1])
 def test_nombre_de_msa_borne_a_six(nombre):
     with pytest.raises(ValueError):
-        liste_ip("192.168.0.187", nombre)
+        liste_ip("192.168.0.186", nombre)
 
 
 def test_ip_invalide():

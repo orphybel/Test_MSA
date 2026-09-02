@@ -209,7 +209,7 @@ def construire_html(campagne_avant, campagne_apres=None):
         ("N° de série du NVR", reference.get("serie_nvr")),
         ("Opérateur", reference.get("operateur")),
         ("Nombre de MSA testés", reference.get("nombre_msa")),
-        ("1ère adresse IP", reference.get("premiere_ip")),
+        ("Carte Contrôle/Switch", reference.get("ip_switch")),
         ("Relevé avant enregistrement", (campagne_avant or {}).get("date")),
         ("Relevé après enregistrement", (campagne_apres or {}).get("date")),
     ]

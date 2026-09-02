@@ -228,7 +228,7 @@ def _cle_ip(equipement):
 
 
 def _tries_par_ip(equipements):
-    """Carte control switch (.186) puis MSA0 (.187), MSA1 (.188)..."""
+    """Carte Controle/Switch (.186) puis MSA0 (.187), MSA1 (.188)..."""
     return sorted(equipements, key=_cle_ip)
 
 
@@ -255,44 +255,54 @@ def exporter_macs(campagne, racine=None):
         ecrire("Nombre de MSA   : %s\n" % campagne.get("nombre_msa", ""))
         source = campagne.get("source_switch")
         if source == "aucune":
-            ecrire("\nCarte control switch : non relevée (choix de l'operateur).\n")
+            ecrire("\nCarte Controle/Switch : non relevée (choix de l'operateur).\n")
         elif source == "web":
-            ecrire("\nCarte control switch : relevée via son interface web.\n")
+            ecrire("\nCarte Controle/Switch : relevée via son interface web.\n")
         elif source == "ssh":
-            ecrire("\nCarte control switch : relevée en SSH.\n")
+            ecrire("\nCarte Controle/Switch : relevée en SSH.\n")
         elif source == "page":
             ecrire(
                 "\nAdresses extraites d'une page de l'interface web enregistrée.\n"
             )
         ecrire("\n")
 
-        # Recapitulatif : une ligne par equipement, dans l'ordre des adresses.
+        # Recapitulatif : une ligne par adresse relevée, equipements dans
+        # l'ordre des adresses IP.
         equipements = _tries_par_ip(campagne.get("equipements", []))
         ecrire("RECAPITULATIF\n")
-        ecrire("-" * 78 + "\n")
+        ecrire("-" * 100 + "\n")
         ecrire(
-            "%-16s %-24s %-16s %s\n"
-            % ("ADRESSE IP", "EQUIPEMENT", "SOURCE", "ADRESSE(S) MAC")
+            "%-22s %-16s %-38s %s\n"
+            % ("EQUIPEMENT", "ADRESSE IP", "MODULE / INTERFACE", "ADRESSE MAC")
         )
         for equipement in equipements:
             if equipement.get("erreur"):
-                macs = "NON RELEVE"
-            else:
-                macs = ", ".join(i["mac"] for i in equipement["interfaces"]) or "aucune"
-            ecrire(
-                "%-16s %-24s %-16s %s\n"
-                % (
-                    equipement["ip"],
-                    equipement["libelle"],
-                    equipement.get("source", "SSH"),
-                    macs,
+                ecrire(
+                    "%-22s %-16s %-38s %s\n"
+                    % (equipement["libelle"], equipement["ip"], "-", "NON RELEVE")
                 )
-            )
+                continue
+            if not equipement["interfaces"]:
+                ecrire(
+                    "%-22s %-16s %-38s %s\n"
+                    % (equipement["libelle"], equipement["ip"], "-", "aucune adresse")
+                )
+                continue
+            for interface in equipement["interfaces"]:
+                ecrire(
+                    "%-22s %-16s %-38s %s\n"
+                    % (
+                        equipement["libelle"],
+                        equipement["ip"],
+                        interface["interface"],
+                        interface["mac"],
+                    )
+                )
         ecrire("\n")
 
         ecrire("DETAIL PAR EQUIPEMENT\n")
         for equipement in equipements:
-            ecrire("-" * 78 + "\n")
+            ecrire("-" * 100 + "\n")
             ecrire(
                 "%s (%s) - source : %s\n"
                 % (
@@ -307,7 +317,7 @@ def exporter_macs(campagne, racine=None):
                 continue
             for interface in equipement["interfaces"]:
                 ecrire(
-                    "  %-12s %s\n" % (interface["interface"], interface["mac"])
+                    "  %-40s %s\n" % (interface["interface"], interface["mac"])
                 )
 
         ecrire("\n" + "=" * 78 + "\n")

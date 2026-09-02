@@ -18,10 +18,11 @@ restent à la charge de l'opérateur.
 
 1. Lancer `TestMSA.exe`.
 2. Renseigner :
-   - **1ʳᵉ adresse IP (MSA0)** — par défaut `192.168.0.187`, modifiable ;
-     les modules suivants sont déduits par incrément de 1 (cf. Figure 12 de la
-     procédure : MSA0 `.187` → MSA5 `.192`). Les adresses effectivement
-     interrogées sont affichées en clair avant lancement.
+   - **Adresse IP de la carte Contrôle/Switch** — c'est la seule adresse à
+     saisir. Les modules MSA sont déduits par incrément de 1 : MSA0 = adresse
+     de la carte + 1, MSA1 = +2, etc. (carte `.186` → MSA0 `.187` … MSA5
+     `.192`). Les adresses effectivement interrogées sont affichées en clair
+     avant lancement.
    - **Nombre de MSA testés** — de 1 à 6.
    - **Login SSH** et **mot de passe** (identifiants du logiciel de
      constitution des bancs de test).
@@ -49,11 +50,10 @@ rapport généré.
 Le bouton **Relever les adresses MAC** interroge, indépendamment des relevés
 SMART :
 
-- la **carte mère control switch**, dont l'adresse est celle qui précède
-  immédiatement la 1ʳᵉ adresse saisie (MSA0 `.187` → carte switch `.186`) ;
+- la **carte Contrôle/Switch**, à l'adresse saisie ;
 - chacun des modules MSA, en SSH avec les identifiants MSA.
 
-Trois sources sont proposées pour la carte control switch :
+Trois sources sont proposées pour la carte Contrôle/Switch :
 
 | Source | Usage |
 |---|---|
@@ -61,12 +61,23 @@ Trois sources sont proposées pour la carte control switch :
 | **SSH** | Si vous disposez du compte console de la carte. |
 | **Ne pas relever** | Seuls les modules MSA sont interrogés. |
 
-En mode interface web, l'application ouvre l'URL indiquée (vide =
-`http://<1ʳᵉ IP moins 1>/`), s'authentifie en **HTTP Basic** ou via le
-**formulaire de connexion** de la page — les champs et les jetons anti-rejeu
-cachés sont détectés automatiquement — puis extrait toutes les adresses MAC
-affichées, avec l'intitulé qui les précède dans la page. Indiquez l'URL exacte
-de la page qui affiche les adresses si ce n'est pas la page d'accueil.
+En mode interface web, l'application ouvre la page **Administration :
+Versions** du NVR — par défaut
+`http://<adresse Contrôle/Switch>/cgi-bin/cgi_fh?URL=SUAdminVersions`. Saisir
+la seule adresse de l'équipement suffit, le chemin est complété ; un chemin
+explicite est toujours respecté.
+
+L'authentification se fait en **HTTP Basic** ou via le **formulaire de
+connexion** de la page — champs identifiant/mot de passe et jetons anti-rejeu
+cachés sont détectés automatiquement.
+
+L'extraction lit la colonne **Adresse MAC** des tableaux de la page et prend
+la colonne **Paramètre** comme intitulé, précédé du titre de section
+(`NVR - Module CPU Enregistreur 0`, `Caméras intérieures - CamInt1_S1`). Le
+checksum affiché sur la même ligne n'est donc jamais confondu avec une
+adresse, les cellules à `?` sont ignorées, et deux modules partageant la même
+adresse restent deux lignes distinctes. Si la page ne comporte pas de colonne
+dédiée, l'application retombe sur une recherche ligne par ligne.
 
 Si l'authentification de votre interface web ne peut pas être automatisée, le
 bouton **MAC depuis une page enregistrée...** extrait les adresses d'une page
@@ -77,10 +88,11 @@ Toutes les interfaces réseau de chaque équipement sont listées avec leur
 adresse MAC dans un fichier texte
 (`adresses_MAC_<n° de série>_<horodatage>.txt`), ouvert en fin de relevé.
 
-Le fichier commence par un **récapitulatif trié par adresse IP** (carte switch
-`.186`, puis MSA0 `.187`, MSA1 `.188`…), suivi du détail interface par
-interface dans le même ordre. Un équipement injoignable apparaît en
-`NON RELEVE` dans le récapitulatif, sans interrompre le relevé des autres.
+Le fichier commence par un **récapitulatif d'une ligne par adresse**, les
+équipements triés par adresse IP (carte Contrôle/Switch `.186`, puis MSA0
+`.187`, MSA1 `.188`…), suivi du détail par équipement dans le même ordre. Un
+équipement injoignable apparaît en `NON RELEVE`, sans interrompre le relevé
+des autres.
 
 La lecture des adresses MAC ne nécessite pas les droits root : aucun `su`
 n'est effectué. Si le login de la carte control switch est laissé vide, seuls

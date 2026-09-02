@@ -19,6 +19,14 @@ import requests
 
 DELAI_HTTP = 20  # secondes
 
+# Page "Administration : Versions" du NVR ACTIA, qui affiche les adresses MAC
+# de chaque module dans un tableau.
+CHEMIN_VERSIONS = "/cgi-bin/cgi_fh?URL=SUAdminVersions"
+
+# Intitules des colonnes recherches dans l'en-tete des tableaux.
+_COLONNE_MAC = "adresse mac"
+_COLONNE_LIBELLE = ("parametre", "paramètre", "module")
+
 # Les separateurs varient d'un equipement a l'autre : 00:11:22, 00-11-22, 001122
 _MAC = re.compile(
     r"\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b"
@@ -101,14 +109,176 @@ def texte_de_la_page(page_html):
     return parseur.lignes
 
 
+class _Tableaux(HTMLParser):
+    """Extrait les tableaux de la page ainsi que les titres qui les precedent."""
+
+    _TITRES = ("h1", "h2", "h3", "h4", "caption", "legend")
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.tableaux = []
+        self._pile = []
+        self._ligne = None
+        self._cellule = None
+        self._titre_courant = ""
+        self._dans_titre = False
+        self._ignore = 0
+
+    # -- ouverture ---------------------------------------------------- #
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style"):
+            self._ignore += 1
+        elif tag == "table":
+            self._pile.append({"lignes": [], "titre": self._titre_courant})
+        elif tag == "tr" and self._pile:
+            self._ligne = []
+        elif tag in ("td", "th") and self._pile:
+            if self._ligne is None:  # cellule hors <tr> : on ouvre une ligne
+                self._ligne = []
+            self._cellule = []
+        elif tag in self._TITRES:
+            self._dans_titre = True
+            self._titre_courant = ""
+
+    # -- fermeture ---------------------------------------------------- #
+    def handle_endtag(self, tag):
+        if tag in ("script", "style"):
+            self._ignore = max(0, self._ignore - 1)
+        elif tag in ("td", "th"):
+            self._fermer_cellule()
+        elif tag == "tr":
+            self._fermer_ligne()
+        elif tag == "table":
+            self._fermer_tableau()
+        elif tag in self._TITRES:
+            self._dans_titre = False
+
+    def handle_data(self, donnees):
+        if self._ignore:
+            return
+        if self._cellule is not None:
+            self._cellule.append(donnees)
+        elif self._dans_titre:
+            self._titre_courant += donnees
+
+    def _fermer_cellule(self):
+        if self._cellule is None:
+            return
+        texte = re.sub(r"\s+", " ", "".join(self._cellule)).strip()
+        if self._ligne is not None:
+            self._ligne.append(texte)
+        self._cellule = None
+
+    def _fermer_ligne(self):
+        self._fermer_cellule()
+        if self._ligne:
+            self._pile[-1]["lignes"].append(self._ligne)
+        self._ligne = None
+
+    def _fermer_tableau(self):
+        self._fermer_ligne()
+        if not self._pile:
+            return
+        tableau = self._pile.pop()
+        lignes = tableau["lignes"]
+        # Un tableau reduit a une seule cellule sert d'intitule de section
+        # (mise en page du NVR : "NVR", "Caméras intérieures"...).
+        if len(lignes) == 1 and len(lignes[0]) == 1 and lignes[0][0]:
+            self._titre_courant = lignes[0][0]
+            return
+        if lignes:
+            self.tableaux.append(tableau)
+
+    def close(self):
+        super().close()
+        while self._pile:
+            self._fermer_tableau()
+
+
+def _index_colonnes(entete):
+    """Repere la colonne des adresses MAC et celle du libelle."""
+    index_mac = None
+    index_libelle = None
+    for index, cellule in enumerate(entete):
+        normalise = cellule.strip().lower()
+        if index_mac is None and _COLONNE_MAC in normalise:
+            index_mac = index
+        elif index_libelle is None and normalise in _COLONNE_LIBELLE:
+            index_libelle = index
+    if index_mac is None:
+        return None, None
+    if index_libelle is None:
+        index_libelle = 0 if index_mac != 0 else None
+    return index_mac, index_libelle
+
+
+def extraire_macs_tableaux(page_html):
+    """Lit les adresses MAC dans les tableaux qui possedent une colonne dediee.
+
+    C'est la mise en page de la page "Administration : Versions" du NVR :
+    une ligne par module, avec les colonnes Parametre, Version logicielle,
+    Checksum et Adresse MAC. Lire la colonne evite de confondre l'adresse
+    avec le checksum et donne un intitule propre.
+    """
+    parseur = _Tableaux()
+    parseur.feed(page_html)
+    parseur.close()
+
+    trouvees = []
+    for tableau in parseur.tableaux:
+        lignes = tableau["lignes"]
+        # Un titre peut aussi occuper la premiere ligne du tableau (cellule
+        # unique) : on le retient et on poursuit sur les lignes suivantes.
+        titre = tableau["titre"]
+        if len(lignes[0]) == 1 and len(lignes) > 1:
+            titre = lignes[0][0] or titre
+            lignes = lignes[1:]
+        if not lignes:
+            continue
+
+        index_mac, index_libelle = _index_colonnes(lignes[0])
+        if index_mac is None:
+            continue
+        for ligne in lignes[1:]:
+            if index_mac >= len(ligne):
+                continue
+            mac = normaliser_mac(ligne[index_mac])
+            if not mac or not _mac_exploitable(mac):
+                continue  # cellule vide, "?" ou adresse inexploitable
+            libelle = (
+                ligne[index_libelle]
+                if index_libelle is not None and index_libelle < len(ligne)
+                else ""
+            )
+            trouvees.append(
+                {
+                    "interface": _intitule(titre, libelle),
+                    "mac": mac,
+                }
+            )
+    return trouvees
+
+
+def _intitule(titre, libelle):
+    titre = (titre or "").strip()
+    libelle = (libelle or "").strip()
+    if titre and libelle:
+        return "%s - %s" % (titre, libelle)
+    return libelle or titre or "adresse relevée"
+
+
 def extraire_macs(page_html):
     """Retourne les adresses MAC de la page, avec leur ligne d'origine.
 
-    Chaque entree vaut {"interface": <ligne de la page>, "mac": <adresse>}.
-    La ligne sert de libelle : elle porte en general le nom du port ou du
-    module auquel l'adresse se rapporte. Les doublons sont ecartes en
-    conservant la premiere occurrence.
+    Les tableaux comportant une colonne "Adresse MAC" sont lus en priorite :
+    l'intitule provient alors de la colonne "Parametre" et deux modules
+    portant la meme adresse restent distincts. A defaut, chaque ligne de
+    texte contenant une adresse est examinee et les doublons sont ecartes.
     """
+    depuis_tableaux = extraire_macs_tableaux(page_html)
+    if depuis_tableaux:
+        return depuis_tableaux
+
     trouvees = []
     deja_vues = set()
     for ligne in texte_de_la_page(page_html):
@@ -267,19 +437,26 @@ def _se_connecter(session, url, reponse, login, mot_de_passe, verifier_tls):
 
 
 def url_par_defaut(ip):
-    """URL de l'interface web a partir de l'adresse de la carte switch."""
-    return "http://%s/" % ip
+    """URL de la page des versions a partir de l'adresse Controle/Switch."""
+    return "http://%s%s" % (ip, CHEMIN_VERSIONS)
 
 
 def normaliser_url(url, ip_par_defaut):
-    """Complete une saisie partielle ("192.168.0.186", "/status")."""
+    """Complete une saisie partielle.
+
+    Saisir la seule adresse de l'equipement suffit : le chemin de la page des
+    versions est ajoute. Un chemin explicite est toujours respecte.
+    """
     url = (url or "").strip()
     if not url:
         return url_par_defaut(ip_par_defaut)
     if url.startswith("/"):
-        return url_par_defaut(ip_par_defaut).rstrip("/") + url
+        return "http://%s%s" % (ip_par_defaut, url)
     if not urlparse(url).scheme:
-        return "http://" + url
+        url = "http://" + url
+    decoupee = urlparse(url)
+    if decoupee.path in ("", "/") and not decoupee.query:
+        return url.rstrip("/") + CHEMIN_VERSIONS
     return url
 
 

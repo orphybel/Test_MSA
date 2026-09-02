@@ -38,24 +38,52 @@ def test_normalisation_des_adresses(brut, attendu):
 # ---------------------------------------------------------------------- #
 # Extraction depuis la page
 # ---------------------------------------------------------------------- #
+# Reconstitution de la page "Administration : Versions" du NVR : un intitule
+# de section dans un tableau d'une cellule, puis le tableau des modules.
 PAGE = """<html><body><script>var x="de:ad:be:ef:00:00";</script>
+<table><tr><td>NVR</td></tr></table>
 <table>
-  <tr><th>Module</th><th>Adresse MAC</th></tr>
-  <tr><td>Control switch eth0</td><td>00:11:22:33:44:55</td></tr>
-  <tr><td>MSA0</td><td>AA-BB-CC-DD-EE-01</td></tr>
-  <tr><td>MSA1</td><td>aa:bb:cc:dd:ee:02</td></tr>
-  <tr><td>Diffusion</td><td>ff:ff:ff:ff:ff:ff</td></tr>
-  <tr><td>Vide</td><td>00:00:00:00:00:00</td></tr>
-  <tr><td>Doublon</td><td>00:11:22:33:44:55</td></tr>
+  <tr><th>Param&egrave;tre</th><th>Version logicielle</th><th>Checksum</th>
+      <th>Adresse MAC</th><th>Etat mise &agrave; jour</th></tr>
+  <tr><td>Module Contr&ocirc;le Switch</td><td>11</td>
+      <td>0ff573d73d3c3f3e060dbfb83141e036</td><td>00:10:02:0F:D7:D7</td><td></td></tr>
+  <tr><td>Module CPU Enregistreur 0</td><td>0.28</td>
+      <td>efa1fecec398587d39f7363f43559a1a</td><td>00:E0:4B:7B:E8:0A</td><td></td></tr>
+  <tr><td>Module CPU Enregistreur 1</td><td>0.28</td>
+      <td>efa1fecec398587d39f7363f43559a1a</td><td>00-E0-4B-7B-E8-3B</td><td></td></tr>
+  <tr><td>Diffusion</td><td>?</td><td>?</td><td>ff:ff:ff:ff:ff:ff</td><td></td></tr>
+  <tr><td>Vide</td><td>?</td><td>?</td><td>00:00:00:00:00:00</td><td></td></tr>
+</table>
+<table><tr><td>Cam&eacute;ras int&eacute;rieures</td></tr></table>
+<table>
+  <tr><th>Param&egrave;tre</th><th>Version logicielle</th><th>Adresse MAC</th></tr>
+  <tr><td>CamInt1_S1</td><td>1.3.0</td><td>00:90:E8:9E:94:CD</td></tr>
+  <tr><td>CamInt2_S1</td><td>?</td><td>?</td></tr>
+  <tr><td>CamInt1_N11</td><td>1.3.0</td><td>00:90:E8:9E:94:CD</td></tr>
 </table></body></html>"""
 
 
-def test_extraction_des_adresses_avec_leur_intitule():
+def test_extraction_depuis_la_colonne_adresse_mac():
     assert extraire_macs(PAGE) == [
-        {"interface": "Control switch eth0", "mac": "00:11:22:33:44:55"},
-        {"interface": "MSA0", "mac": "aa:bb:cc:dd:ee:01"},
-        {"interface": "MSA1", "mac": "aa:bb:cc:dd:ee:02"},
+        {"interface": "NVR - Module Contrôle Switch", "mac": "00:10:02:0f:d7:d7"},
+        {"interface": "NVR - Module CPU Enregistreur 0", "mac": "00:e0:4b:7b:e8:0a"},
+        {"interface": "NVR - Module CPU Enregistreur 1", "mac": "00:e0:4b:7b:e8:3b"},
+        {"interface": "Caméras intérieures - CamInt1_S1", "mac": "00:90:e8:9e:94:cd"},
+        {"interface": "Caméras intérieures - CamInt1_N11", "mac": "00:90:e8:9e:94:cd"},
     ]
+
+
+def test_le_checksum_n_est_pas_pris_pour_une_adresse():
+    """Le checksum est une longue chaine hexadecimale sur la meme ligne."""
+    macs = [entree["mac"] for entree in extraire_macs(PAGE)]
+    assert all(len(mac) == 17 for mac in macs)
+    assert not any("efa1fecec" in entree["interface"] for entree in extraire_macs(PAGE))
+
+
+def test_les_cellules_sans_adresse_sont_ignorees():
+    """Les modules absents affichent "?" dans la colonne."""
+    intitules = [entree["interface"] for entree in extraire_macs(PAGE)]
+    assert not any("CamInt2_S1" in intitule for intitule in intitules)
 
 
 def test_les_adresses_de_diffusion_et_nulles_sont_ecartees():
@@ -69,8 +97,32 @@ def test_le_contenu_des_scripts_est_ignore():
     assert "de:ad:be:ef:00:00" not in macs
 
 
-def test_les_doublons_sont_ecartes():
-    macs = [entree["mac"] for entree in extraire_macs(PAGE)]
+def test_deux_modules_partageant_une_adresse_restent_distincts():
+    """Les cameras affichent la meme adresse : aucune ligne ne doit disparaitre."""
+    intitules = [entree["interface"] for entree in extraire_macs(PAGE)]
+    assert "Caméras intérieures - CamInt1_S1" in intitules
+    assert "Caméras intérieures - CamInt1_N11" in intitules
+
+
+# ---------------------------------------------------------------------- #
+# Repli : page sans colonne "Adresse MAC"
+# ---------------------------------------------------------------------- #
+PAGE_SANS_TABLEAU = """<html><body>
+<p>Port 1 : 00:11:22:33:44:55</p>
+<p>Port 2 : 00:11:22:33:44:66</p>
+<p>Rappel : 00:11:22:33:44:55</p>
+</body></html>"""
+
+
+def test_repli_sur_les_lignes_de_texte():
+    assert extraire_macs(PAGE_SANS_TABLEAU) == [
+        {"interface": "Port 1", "mac": "00:11:22:33:44:55"},
+        {"interface": "Port 2", "mac": "00:11:22:33:44:66"},
+    ]
+
+
+def test_les_doublons_sont_ecartes_en_mode_texte():
+    macs = [entree["mac"] for entree in extraire_macs(PAGE_SANS_TABLEAU)]
     assert len(macs) == len(set(macs))
 
 
@@ -123,15 +175,24 @@ def test_formulaire_sans_champ_identifiant():
 # ---------------------------------------------------------------------- #
 # URL
 # ---------------------------------------------------------------------- #
+VERSIONS = "/cgi-bin/cgi_fh?URL=SUAdminVersions"
+
+
 @pytest.mark.parametrize(
     "saisie,attendu",
     [
-        ("", "http://192.168.0.186/"),
-        ("/status.html", "http://192.168.0.186/status.html"),
-        ("192.168.0.186/infos", "http://192.168.0.186/infos"),
+        # rien de saisi : page des versions de la carte Controle/Switch
+        ("", "http://192.168.0.196" + VERSIONS),
+        # la seule adresse suffit, le chemin est complete
+        ("192.168.0.196", "http://192.168.0.196" + VERSIONS),
+        ("http://192.168.0.196", "http://192.168.0.196" + VERSIONS),
+        ("http://192.168.0.196/", "http://192.168.0.196" + VERSIONS),
+        # un chemin explicite est respecte
+        ("/status.html", "http://192.168.0.196/status.html"),
+        ("192.168.0.196/infos", "http://192.168.0.196/infos"),
         ("http://autre.local/x", "http://autre.local/x"),
-        ("https://192.168.0.186/", "https://192.168.0.186/"),
+        ("http://192.168.0.196" + VERSIONS, "http://192.168.0.196" + VERSIONS),
     ],
 )
 def test_completion_de_l_url(saisie, attendu):
-    assert normaliser_url(saisie, "192.168.0.186") == attendu
+    assert normaliser_url(saisie, "192.168.0.196") == attendu

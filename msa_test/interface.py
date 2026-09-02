@@ -28,12 +28,11 @@ from .campagne import (
     SOURCE_SWITCH_WEB,
     campagne_mac_depuis_page,
     executer_campagne_mac,
-    ip_carte_switch,
     liste_ip,
 )
 
 FICHIER_PREFS = "preferences_msa.json"
-IP_PAR_DEFAUT = "192.168.0.187"
+IP_PAR_DEFAUT = "192.168.0.186"
 
 
 class Application(tk.Tk):
@@ -81,7 +80,7 @@ class Application(tk.Tk):
         self.var_login_switch = tk.StringVar()
         self.var_mdp_switch = tk.StringVar()
 
-        ttk.Label(cadre, text="1ere adresse IP (MSA0) *").grid(
+        ttk.Label(cadre, text="Adresse IP carte Controle/Switch *").grid(
             row=0, column=0, sticky="w", padx=8, pady=6
         )
         ttk.Entry(cadre, textvariable=self.var_ip, width=20).grid(
@@ -153,7 +152,7 @@ class Application(tk.Tk):
     def _construire_carte_switch(self):
         """Identifiants de la carte control switch, pour le relevé des MAC."""
         cadre = ttk.LabelFrame(
-            self, text="Carte control switch (relevé des adresses MAC uniquement)"
+            self, text="Carte Controle/Switch (relevé des adresses MAC uniquement)"
         )
         cadre.pack(fill="x", padx=10, pady=(0, 6))
 
@@ -180,8 +179,8 @@ class Application(tk.Tk):
         self.champ_url.grid(row=1, column=1, columnspan=2, sticky="w", pady=6)
         self.etiquette_url_aide = ttk.Label(
             cadre,
-            text="vide = http://<1ere IP moins 1>/ ; indiquer la page qui affiche "
-            "les adresses MAC",
+            text="vide = http://<adresse Controle/Switch>/cgi-bin/cgi_fh?URL="
+            "SUAdminVersions (page Administration : Versions)",
             foreground="#555555",
         )
         self.etiquette_url_aide.grid(row=2, column=1, columnspan=5, sticky="w")
@@ -362,12 +361,10 @@ class Application(tk.Tk):
         detail = "   ".join(
             "MSA%d = %s" % (index, adresse) for index, adresse in enumerate(ips)
         )
-        try:
-            switch = "control switch = %s   " % ip_carte_switch(self.var_ip.get())
-        except ValueError:
-            switch = ""
         self.etiquette_apercu.configure(
-            text="Adresses interrogées : " + switch + detail, foreground="#00693e"
+            text="Adresses interrogées : Controle/Switch = %s   %s"
+            % (self.var_ip.get().strip(), detail),
+            foreground="#00693e",
         )
 
     # ------------------------------------------------------------------ #
@@ -382,7 +379,7 @@ class Application(tk.Tk):
                 prefs = json.load(fichier)
         except (OSError, ValueError):
             return
-        self.var_ip.set(prefs.get("premiere_ip", IP_PAR_DEFAUT))
+        self.var_ip.set(prefs.get("ip_switch", IP_PAR_DEFAUT))
         self.var_nombre.set(prefs.get("nombre_msa", 1))
         self.var_login.set(prefs.get("login", ""))
         self.var_port.set(prefs.get("port", 22))
@@ -394,7 +391,7 @@ class Application(tk.Tk):
 
     def _enregistrer_preferences(self):
         prefs = {
-            "premiere_ip": self.var_ip.get(),
+            "ip_switch": self.var_ip.get(),
             "nombre_msa": int(self.var_nombre.get()),
             "login": self.var_login.get(),
             "port": int(self.var_port.get()),
@@ -458,7 +455,8 @@ class Application(tk.Tk):
         mdp = self.var_mdp.get()
         if not ip or not login or not mdp:
             raise ValueError(
-                "Renseigner la 1ere adresse IP, le login et le mot de passe."
+                "Renseigner l'adresse de la carte Controle/Switch, le login "
+                "et le mot de passe."
             )
         try:
             nombre = int(self.var_nombre.get())
@@ -468,7 +466,7 @@ class Application(tk.Tk):
         liste_ip(ip, nombre)  # valide l'adresse et la plage 1..6
         return {
             "phase": phase,
-            "premiere_ip": ip,
+            "ip_switch": ip,
             "nombre_msa": nombre,
             "login": login,
             "mot_de_passe": mdp,
@@ -529,13 +527,13 @@ class Application(tk.Tk):
         ):
             messagebox.showerror(
                 "Parametres incomplets",
-                "Renseigner le login et le mot de passe de la carte control "
-                "switch, ou choisir « Ne pas relever ».",
+                "Renseigner le login et le mot de passe de la carte "
+                "Controle/Switch, ou choisir « Ne pas relever ».",
             )
             return
         if source == SOURCE_SWITCH_AUCUNE and not messagebox.askyesno(
-            "Carte control switch",
-            "La carte control switch ne sera pas relevée.\n\nContinuer avec "
+            "Carte Controle/Switch",
+            "La carte Controle/Switch ne sera pas relevée.\n\nContinuer avec "
             "les seuls modules MSA ?",
         ):
             return
@@ -569,7 +567,7 @@ class Application(tk.Tk):
             # Les identifiants SSH ne servent pas ici : on se contente des
             # informations d'en-tete du rapport.
             config = {
-                "premiere_ip": self.var_ip.get().strip(),
+                "ip_switch": self.var_ip.get().strip(),
                 "nombre_msa": int(self.var_nombre.get() or 1),
                 "operateur": self.var_operateur.get().strip(),
                 "serie_nvr": self.var_serie.get().strip(),
