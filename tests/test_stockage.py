@@ -9,7 +9,10 @@ import pytest
 
 from msa_test.rapport import exporter_stockage
 from msa_test.stockage import (
+    CAPACITE_MINIMALE,
     ErreurStockage,
+    LOGIN_REST,
+    MOT_DE_PASSE_REST,
     analyser_reponse,
     formater_capacite,
     url_stockage,
@@ -40,13 +43,13 @@ REPONSE = (
 
 def test_lecture_de_la_capacite():
     releve = analyser_reponse(REPONSE)
-    assert releve["capacite_mo"] == 3755205
+    assert releve["capacite_ko"] == 3755205
     assert len(releve["entrees"]) == 2
 
 
 def test_capacite_imbriquee():
     """La capacite est retrouvee meme si elle n'est pas au premier niveau."""
-    assert analyser_reponse('{"storage": {"capacity": 42}}')["capacite_mo"] == 42
+    assert analyser_reponse('{"storage": {"capacity": 42}}')["capacite_ko"] == 42
 
 
 def test_reponse_sans_entrees_disque():
@@ -64,27 +67,39 @@ def test_reponse_sans_capacite():
 
 
 def test_mise_en_forme_de_la_capacite():
-    """L'exemple de la procedure : Capacity = 3 755 205 Mo."""
+    """L'exemple de la procedure : Capacity = 3 755 205."""
     texte = formater_capacite(3755205)
-    assert texte.startswith("3 755 205 Mo")
-    assert "To" in texte
+    assert texte.startswith("3 755 205 Ko")
+    assert "Mo" in texte and "Go" in texte
 
 
 # ---------------------------------------------------------------------- #
 # Sanction
 # ---------------------------------------------------------------------- #
+def test_seuil_par_defaut():
+    """Le seuil d'acceptation est de 3 700 000 Ko."""
+    assert CAPACITE_MINIMALE == 3700000
+    assert verdict(3755205)[1] is True
+    assert verdict(3699999)[1] is False
+
+
+def test_capacite_exactement_au_seuil_acceptee():
+    """La regle est "capacite >= 3 700 000 Ko"."""
+    assert verdict(3700000)[1] is True
+
+
 def test_capacite_suffisante():
-    sanction, conforme = verdict(3755205, 3500000)
+    sanction, conforme = verdict(3755205, 3700000)
     assert conforme is True and "SUFFISANTE" in sanction
 
 
 def test_capacite_insuffisante():
-    sanction, conforme = verdict(1900000, 3500000)
+    sanction, conforme = verdict(1900000, 3700000)
     assert conforme is False and "INSUFFISANTE" in sanction
 
 
-def test_capacite_exactement_au_minimum():
-    assert verdict(3500000, 3500000)[1] is True
+def test_identifiants_rest_par_defaut():
+    assert (LOGIN_REST, MOT_DE_PASSE_REST) == ("rest", "rest1234")
 
 
 def test_sans_minimum_aucune_sanction():
@@ -95,7 +110,7 @@ def test_sans_minimum_aucune_sanction():
 
 
 def test_capacite_absente():
-    assert verdict(None, 3500000)[1] is False
+    assert verdict(None, 3700000)[1] is False
 
 
 # ---------------------------------------------------------------------- #
@@ -108,23 +123,23 @@ def _campagne(**extra):
         "operateur": "J. DURAND",
         "serie_nvr": "NVR-2026-017",
         "nombre_msa": 2,
-        "capacite_minimale_mo": 3500000,
+        "capacite_minimale_ko": 3700000,
         "modules": [
             {
                 "msa": 0,
                 "ip": "192.168.0.187",
-                "capacite_mo": 3755205,
+                "capacite_ko": 3755205,
                 "entrees": [{"index": 0, "device": "/dev/sda1", "state": "OK"}],
-                "sanction": "SUFFISANTE (minimum 3 500 000 Mo)",
+                "sanction": "SUFFISANTE (minimum 3 700 000 Ko)",
                 "conforme": True,
                 "erreur": None,
             },
             {
                 "msa": 1,
                 "ip": "192.168.0.188",
-                "capacite_mo": 1900000,
+                "capacite_ko": 3699999,
                 "entrees": [],
-                "sanction": "INSUFFISANTE (minimum 3 500 000 Mo)",
+                "sanction": "INSUFFISANTE (minimum 3 700 000 Ko)",
                 "conforme": False,
                 "erreur": None,
             },
@@ -139,14 +154,14 @@ def test_le_fichier_reprend_chaque_module(tmp_path):
     contenu = open(chemin, encoding="utf-8").read()
     assert anomalies == 1
     assert "NVR-2026-017" in os.path.basename(chemin)
-    assert "MSA0" in contenu and "3 755 205 Mo" in contenu
+    assert "MSA0" in contenu and "3 755 205 Ko" in contenu
     assert "MSA1" in contenu and "INSUFFISANTE" in contenu
     assert "/dev/sda1" in contenu  # detail des entrées disque
     assert "1 module(s) non conforme(s)" in contenu
 
 
 def test_sans_minimum_le_fichier_le_signale(tmp_path):
-    campagne = _campagne(capacite_minimale_mo=None)
+    campagne = _campagne(capacite_minimale_ko=None)
     for module in campagne["modules"]:
         module["conforme"] = None
         module["sanction"] = "relevé - a comparer au minimum attendu"

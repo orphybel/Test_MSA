@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from . import __version__, rapport, rapport_html
 from .chemins import ouvrir_dans_l_explorateur, racine_application
+from .stockage import CAPACITE_MINIMALE, LOGIN_REST, MOT_DE_PASSE_REST
 from .smart_parser import valeur_est_nulle
 from .campagne import (
     NB_MSA_MAX,
@@ -75,7 +76,9 @@ class Application(tk.Tk):
         self.var_mdp_root = tk.StringVar()
         self.var_port = tk.IntVar(value=22)
         self.var_operateur = tk.StringVar()
-        self.var_capacite_min = tk.StringVar()
+        self.var_capacite_min = tk.StringVar(value=str(CAPACITE_MINIMALE))
+        self.var_login_rest = tk.StringVar(value=LOGIN_REST)
+        self.var_mdp_rest = tk.StringVar(value=MOT_DE_PASSE_REST)
         self.var_serie = tk.StringVar()
         self.var_source_switch = tk.StringVar(value=SOURCE_SWITCH_WEB)
         self.var_url_web = tk.StringVar()
@@ -140,16 +143,29 @@ class Application(tk.Tk):
         ttk.Entry(cadre, textvariable=self.var_operateur, width=20).grid(
             row=3, column=3, sticky="w", pady=(0, 8)
         )
-        ttk.Label(cadre, text="Capacite mini (Mo)").grid(
+        ttk.Label(cadre, text="Capacite mini (Ko)").grid(
             row=3, column=4, sticky="w", padx=8
         )
         ttk.Entry(cadre, textvariable=self.var_capacite_min, width=12).grid(
             row=3, column=5, sticky="w", pady=(0, 8)
         )
 
+        ttk.Label(cadre, text="Login REST (capacité)").grid(
+            row=4, column=0, sticky="w", padx=8
+        )
+        ttk.Entry(cadre, textvariable=self.var_login_rest, width=20).grid(
+            row=4, column=1, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(cadre, text="Mot de passe REST").grid(
+            row=4, column=2, sticky="w", padx=8
+        )
+        ttk.Entry(cadre, textvariable=self.var_mdp_rest, width=20, show="*").grid(
+            row=4, column=3, sticky="w", pady=(0, 8)
+        )
+
         self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
         self.etiquette_apercu.grid(
-            row=4, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
+            row=5, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
         )
 
         self._construire_carte_switch()
@@ -400,7 +416,10 @@ class Application(tk.Tk):
         self.var_port.set(prefs.get("port", 22))
         self.var_operateur.set(prefs.get("operateur", ""))
         self.var_serie.set(prefs.get("serie_nvr", ""))
-        self.var_capacite_min.set(prefs.get("capacite_minimale_mo", ""))
+        self.var_capacite_min.set(
+            prefs.get("capacite_minimale_ko", str(CAPACITE_MINIMALE))
+        )
+        self.var_login_rest.set(prefs.get("login_rest", LOGIN_REST))
         self.var_login_switch.set(prefs.get("login_switch", ""))
         self.var_source_switch.set(prefs.get("source_switch", SOURCE_SWITCH_WEB))
         self.var_url_web.set(prefs.get("url_web", ""))
@@ -413,7 +432,8 @@ class Application(tk.Tk):
             "port": int(self.var_port.get()),
             "operateur": self.var_operateur.get(),
             "serie_nvr": self.var_serie.get(),
-            "capacite_minimale_mo": self.var_capacite_min.get(),
+            "capacite_minimale_ko": self.var_capacite_min.get(),
+            "login_rest": self.var_login_rest.get(),
             "login_switch": self.var_login_switch.get(),
             "source_switch": self.var_source_switch.get(),
             "url_web": self.var_url_web.get(),
@@ -487,8 +507,8 @@ class Application(tk.Tk):
                 capacite_minimale = int(saisie)
             except ValueError:
                 raise ValueError(
-                    "La capacite minimale doit etre un nombre de Mo "
-                    "(exemple : 3500000), ou rester vide."
+                    "La capacite minimale doit etre un nombre de Ko "
+                    "(exemple : 3700000), ou rester vide."
                 )
         liste_ip(ip, nombre)  # valide l'adresse et la plage 1..6
         return {
@@ -501,7 +521,9 @@ class Application(tk.Tk):
             "port": port,
             "operateur": self.var_operateur.get().strip(),
             "serie_nvr": self.var_serie.get().strip(),
-            "capacite_minimale_mo": capacite_minimale,
+            "capacite_minimale_ko": capacite_minimale,
+            "login_rest": self.var_login_rest.get().strip(),
+            "mot_de_passe_rest": self.var_mdp_rest.get(),
             "source_switch": self.var_source_switch.get(),
             "url_web": self.var_url_web.get().strip(),
             "login_web": self.var_login_switch.get().strip(),
@@ -657,7 +679,9 @@ class Application(tk.Tk):
                 "nombre_msa": int(self.var_nombre.get() or 1),
                 "operateur": self.var_operateur.get().strip(),
                 "serie_nvr": self.var_serie.get().strip(),
-            "capacite_minimale_mo": capacite_minimale,
+            "capacite_minimale_ko": capacite_minimale,
+            "login_rest": self.var_login_rest.get().strip(),
+            "mot_de_passe_rest": self.var_mdp_rest.get(),
             }
         try:
             campagne = campagne_mac_depuis_page(chemin, config, self._tracer)

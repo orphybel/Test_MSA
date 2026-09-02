@@ -20,8 +20,16 @@ DELAI_HTTP = 20  # secondes
 PORT_STOCKAGE = 8080
 CHEMIN_STOCKAGE = "/storage/status"
 
-MO_PAR_GO = 1024
-MO_PAR_TO = 1024 * 1024
+# Compte de l'interface REST des modules CPU enregistreur.
+LOGIN_REST = "rest"
+MOT_DE_PASSE_REST = "rest1234"
+
+# Seuil d'acceptation : la capacite relevée doit valoir au moins 3 700 000 Ko.
+CAPACITE_MINIMALE = 3700000
+
+# La reponse exprime la capacite en Ko ; les equivalents facilitent la lecture.
+KO_PAR_MO = 1024
+KO_PAR_GO = 1024 * 1024
 
 
 class ErreurStockage(Exception):
@@ -32,15 +40,15 @@ def url_stockage(ip, port=PORT_STOCKAGE):
     return "http://%s:%d%s" % (ip, port, CHEMIN_STOCKAGE)
 
 
-def formater_capacite(capacite_mo):
-    """Presente une capacite en Mo, avec son equivalent en Go et To."""
-    if capacite_mo is None:
+def formater_capacite(capacite_ko):
+    """Presente une capacite en Ko, avec ses equivalents en Mo et Go."""
+    if capacite_ko is None:
         return "non relevée"
-    mo = "{:,}".format(int(capacite_mo)).replace(",", " ")
-    return "%s Mo (%.1f Go / %.2f To)" % (
-        mo,
-        capacite_mo / MO_PAR_GO,
-        capacite_mo / MO_PAR_TO,
+    ko = "{:,}".format(int(capacite_ko)).replace(",", " ")
+    return "%s Ko (%.0f Mo / %.2f Go)" % (
+        ko,
+        capacite_ko / KO_PAR_MO,
+        capacite_ko / KO_PAR_GO,
     )
 
 
@@ -77,20 +85,26 @@ def analyser_reponse(texte):
         )
     entrees = donnees.get("hdd_status_entries") if isinstance(donnees, dict) else None
     return {
-        "capacite_mo": capacite,
+        "capacite_ko": capacite,
         "entrees": entrees if isinstance(entrees, list) else [],
         "brut": donnees,
     }
 
 
-def interroger(ip, port=PORT_STOCKAGE, login=None, mot_de_passe=None):
-    """Envoie la requete GET /storage/status et retourne la capacite lue."""
+def interroger(ip, port=PORT_STOCKAGE, login=LOGIN_REST, mot_de_passe=MOT_DE_PASSE_REST):
+    """Envoie la requete GET /storage/status et retourne la capacite lue.
+
+    L'interface REST des modules demande une authentification : les
+    identifiants sont envoyes des la premiere requete, certains services
+    repondant 401 sans annoncer d'en-tete d'authentification.
+    """
     url = url_stockage(ip, port)
+    authentification = (login, mot_de_passe or "") if login else None
     try:
-        reponse = requests.get(url, timeout=DELAI_HTTP)
-        if reponse.status_code == 401 and login:
-            reponse = requests.get(
-                url, timeout=DELAI_HTTP, auth=(login, mot_de_passe or "")
+        reponse = requests.get(url, timeout=DELAI_HTTP, auth=authentification)
+        if reponse.status_code in (401, 403):
+            raise ErreurStockage(
+                "identifiants REST refuses (HTTP %d)" % reponse.status_code
             )
         reponse.raise_for_status()
     except requests.exceptions.ConnectionError:
@@ -107,21 +121,17 @@ def interroger(ip, port=PORT_STOCKAGE, login=None, mot_de_passe=None):
     return releve
 
 
-def verdict(capacite_mo, minimum_mo):
+def verdict(capacite_ko, minimum_ko=CAPACITE_MINIMALE):
     """Sanction du relevé : (texte, conforme).
 
-    La procedure demande de verifier que la capacite totale est suffisante
-    sans fixer de valeur : sans minimum renseigne, la capacite est seulement
-    relevée et l'operateur tranche.
+    La capacite doit valoir au moins le minimum attendu (3 700 000 Ko par
+    defaut). Un minimum vide laisse le relevé sans sanction.
     """
-    if capacite_mo is None:
+    if capacite_ko is None:
         return "NON RELEVE", False
-    if not minimum_mo:
+    if not minimum_ko:
         return "relevé - a comparer au minimum attendu", None
-    if capacite_mo >= minimum_mo:
-        return "SUFFISANTE (minimum %s Mo)" % "{:,}".format(
-            int(minimum_mo)
-        ).replace(",", " "), True
-    return "INSUFFISANTE (minimum %s Mo)" % "{:,}".format(
-        int(minimum_mo)
-    ).replace(",", " "), False
+    minimum = "{:,}".format(int(minimum_ko)).replace(",", " ")
+    if capacite_ko >= minimum_ko:
+        return "SUFFISANTE (minimum %s Ko)" % minimum, True
+    return "INSUFFISANTE (minimum %s Ko)" % minimum, False

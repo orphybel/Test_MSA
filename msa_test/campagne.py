@@ -15,7 +15,15 @@ from .smart_parser import (
     valeur_est_nulle,
 )
 from .ssh_client import ErreurMSA, SessionMSA
-from .stockage import ErreurStockage, formater_capacite, interroger, verdict
+from .stockage import (
+    CAPACITE_MINIMALE,
+    ErreurStockage,
+    LOGIN_REST,
+    MOT_DE_PASSE_REST,
+    formater_capacite,
+    interroger,
+    verdict,
+)
 from .web_mac import ErreurWeb, extraire_macs, normaliser_url, relever_macs_web
 
 NB_MSA_MAX = 6
@@ -461,7 +469,7 @@ def relever_stockage(msa, ip, config, journal):
     resultat = {
         "msa": msa,
         "ip": ip,
-        "capacite_mo": None,
+        "capacite_ko": None,
         "entrees": [],
         "sanction": "",
         "conforme": None,
@@ -473,15 +481,15 @@ def relever_stockage(msa, ip, config, journal):
         releve = interroger(
             ip,
             config.get("port_stockage", 8080),
-            config.get("login"),
-            config.get("mot_de_passe"),
+            config.get("login_rest", LOGIN_REST),
+            config.get("mot_de_passe_rest", MOT_DE_PASSE_REST),
         )
-        resultat["capacite_mo"] = releve["capacite_mo"]
+        resultat["capacite_ko"] = releve["capacite_ko"]
         resultat["entrees"] = releve["entrees"]
         resultat["url"] = releve["url"]
         journal(
             "MSA%d (%s) : capacite = %s"
-            % (msa, ip, formater_capacite(releve["capacite_mo"]))
+            % (msa, ip, formater_capacite(releve["capacite_ko"]))
         )
         if releve["entrees"]:
             journal(
@@ -496,7 +504,8 @@ def relever_stockage(msa, ip, config, journal):
         journal("MSA%d (%s) : ECHEC - %s" % (msa, ip, err))
 
     sanction, conforme = verdict(
-        resultat["capacite_mo"], config.get("capacite_minimale_mo")
+        resultat["capacite_ko"],
+        config.get("capacite_minimale_ko", CAPACITE_MINIMALE),
     )
     if resultat["erreur"]:
         sanction, conforme = "NON RELEVE (%s)" % resultat["erreur"], False
@@ -513,7 +522,7 @@ def executer_campagne_stockage(config, journal, sur_resultat=None, arret=None):
         "nombre_msa": config["nombre_msa"],
         "operateur": config.get("operateur", ""),
         "serie_nvr": config.get("serie_nvr", ""),
-        "capacite_minimale_mo": config.get("capacite_minimale_mo"),
+        "capacite_minimale_ko": config.get("capacite_minimale_ko", CAPACITE_MINIMALE),
         "date": datetime.datetime.now().isoformat(timespec="seconds"),
         "modules": [],
     }

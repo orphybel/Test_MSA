@@ -30,8 +30,9 @@ restent à la charge de l'opérateur.
      est réutilisé.
    - **N° de série du NVR** — repris dans le **nom de tous les fichiers
      produits**, dans l'en-tête du rapport, dans le PV et dans le CSV.
-   - *Optionnel* : port SSH, nom de l'opérateur (repris sur le PV) et
-     identifiants de la carte control switch (relevé des adresses MAC).
+   - *Optionnel* : port SSH, nom de l'opérateur (repris sur le PV),
+     identifiants de la carte Contrôle/Switch (relevé des adresses MAC) et
+     compte REST (relevé de la capacité, pré-rempli).
 3. **Bouton 1 — Relevé AVANT enregistrement (étapes 12 à 15)** : l'application
    se connecte à chaque MSA, attend l'invite de mot de passe du `su`, passe en
    super-utilisateur, exécute les deux `smartctl` et affiche les RAW_VALUE. Le
@@ -54,17 +55,20 @@ requête de la procédure — celle passée manuellement sous INSOMNIA :
 GET http://<adresse du MSA>:8080/storage/status
 ```
 
-La valeur `capacity` de la réponse JSON est relevée et affichée en Mo, Go et
-To (exemple de la procédure : `3 755 205 Mo`), avec le détail des
-`hdd_status_entries` renvoyées. Le résultat est écrit dans
+L'interface REST des modules demande une authentification : les champs
+**Login REST** et **Mot de passe REST** sont pré-remplis avec le compte
+`rest` / `rest1234` et les identifiants sont envoyés dès la première requête.
+
+La valeur `capacity` de la réponse JSON est relevée et affichée en Ko, avec ses
+équivalents en Mo et Go (exemple de la procédure : `3 755 205 Ko`), ainsi que
+le détail des `hdd_status_entries` renvoyées. Le résultat est écrit dans
 `capacite_stockage_<n° de série>_<horodatage>.txt`, ouvert en fin de relevé.
 
-Le champ **Capacité mini (Mo)** fixe le seuil de la sanction : chaque module
-est marqué `SUFFISANTE` ou `INSUFFISANTE`. La procédure demande de vérifier que
-la capacité est « suffisante » sans donner de valeur : **laissé vide, le champ
-n'entraîne aucune sanction** et les capacités sont seulement relevées, à
-comparer sur la Fiche de Test. Un module injoignable est reporté en
-`NON RELEVE` sans interrompre les autres.
+Le seuil d'acceptation est **capacité ≥ 3 700 000 Ko** : chaque module est
+marqué `SUFFISANTE` ou `INSUFFISANTE`. Le champ **Capacité mini (Ko)** permet
+de le modifier ; vidé, il n'entraîne aucune sanction et les capacités sont
+seulement relevées. Un module injoignable est reporté en `NON RELEVE` sans
+interrompre les autres.
 
 ## Relevé des adresses MAC
 

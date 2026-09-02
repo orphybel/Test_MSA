@@ -341,14 +341,14 @@ def exporter_stockage(campagne, racine=None):
         _horodatage(campagne),
     )
     chemin = os.path.join(dossier_resultats(racine), nom)
-    minimum = campagne.get("capacite_minimale_mo")
+    minimum = campagne.get("capacite_minimale_ko")
     anomalies = 0
 
     with open(chemin, "w", encoding="utf-8") as fichier:
         ecrire = fichier.write
         ecrire("RELEVE DE LA CAPACITE DE STOCKAGE\n")
         ecrire("Modules CPU enregistreur - procedure X301773\n")
-        ecrire("Requete : GET http://<module>:8080/storage/status\n")
+        ecrire("Requete : GET http://<module>:8080/storage/status (compte REST)\n")
         ecrire("=" * 90 + "\n\n")
         ecrire("Date            : %s\n" % campagne.get("date", ""))
         ecrire("N° de serie NVR : %s\n" % (campagne.get("serie_nvr") or "..."))
@@ -373,7 +373,7 @@ def exporter_stockage(campagne, racine=None):
                 % (
                     "MSA%d" % module["msa"],
                     module["ip"],
-                    formater_capacite(module["capacite_mo"]),
+                    formater_capacite(module["capacite_ko"]),
                     module["sanction"][:60],
                 )
             )
