@@ -46,6 +46,7 @@ def _config(**extra):
         "nombre_msa": 3,
         "login": "operateur",
         "mot_de_passe": "motdepasse",
+        "source_switch": "ssh",
         "login_switch": "admin",
         "mot_de_passe_switch": "autre",
     }
@@ -111,7 +112,7 @@ def _campagne(**extra):
         "operateur": "J. DURAND",
         "serie_nvr": "NVR-2026-017",
         "nombre_msa": 1,
-        "carte_switch_relevee": True,
+        "source_switch": "web",
         "equipements": [
             {
                 "libelle": "Carte control switch",
@@ -154,10 +155,20 @@ def test_les_equipements_en_echec_sont_comptes(tmp_path):
 
 
 def test_la_carte_switch_non_relevee_est_signalee(tmp_path):
-    campagne = _campagne(carte_switch_relevee=False)
+    campagne = _campagne(source_switch="aucune")
     campagne["equipements"] = campagne["equipements"][1:]
     contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
     assert "Carte control switch : non relevée" in contenu
+
+
+def test_la_source_de_chaque_equipement_est_indiquee(tmp_path):
+    campagne = _campagne()
+    campagne["equipements"][0]["source"] = "interface web"
+    campagne["equipements"][1]["source"] = "SSH"
+    contenu = open(exporter_macs(campagne, str(tmp_path))[0], encoding="utf-8").read()
+    assert "relevée via son interface web" in contenu
+    assert "interface web" in contenu.split("RECAPITULATIF")[1]
+    assert "source : SSH" in contenu
 
 
 def test_le_recapitulatif_suit_l_ordre_des_adresses(tmp_path):

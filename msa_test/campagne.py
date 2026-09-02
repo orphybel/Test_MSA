@@ -6,6 +6,7 @@ Phase "apres"  -> etape 24 (memes relevés + comparaison avec la phase avant).
 
 import datetime
 import ipaddress
+import os
 
 from .smart_parser import (
     ATTRIBUTS,
@@ -14,6 +15,7 @@ from .smart_parser import (
     valeur_est_nulle,
 )
 from .ssh_client import ErreurMSA, SessionMSA
+from .web_mac import ErreurWeb, extraire_macs, normaliser_url, relever_macs_web
 
 NB_MSA_MAX = 6
 PARTITIONS = ("/dev/sda1", "/dev/sdb1")
@@ -306,21 +308,58 @@ def relever_mac(libelle, ip, login, mot_de_passe, port, journal):
     return resultat
 
 
+SOURCE_SWITCH_WEB = "web"
+SOURCE_SWITCH_SSH = "ssh"
+SOURCE_SWITCH_AUCUNE = "aucune"
+
+
+def relever_mac_switch_web(config, journal):
+    """Relevé des MAC de la carte control switch via son interface web.
+
+    Les identifiants SSH de cette carte ne sont pas toujours connus alors que
+    ceux de l'interface web le sont : la page qui affiche les adresses est
+    alors lue directement en HTTP.
+    """
+    ip = ip_carte_switch(config["premiere_ip"])
+    url = normaliser_url(config.get("url_web"), ip)
+    resultat = {
+        "libelle": "Carte control switch",
+        "ip": ip,
+        "url": url,
+        "source": "interface web",
+        "interfaces": [],
+        "erreur": None,
+        "horodatage": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        resultat["interfaces"] = relever_macs_web(
+            url, config.get("login_web", ""), config.get("mot_de_passe_web", ""), journal
+        )
+    except ErreurWeb as err:
+        resultat["erreur"] = str(err)
+        journal("Interface web (%s) : ECHEC - %s" % (url, err))
+    except Exception as err:  # un echec ici n'arrete pas le relevé des MSA
+        resultat["erreur"] = "Erreur inattendue : %s" % err
+        journal("Interface web (%s) : ECHEC - %s" % (url, err))
+    return resultat
+
+
 def equipements_mac(config):
     """Liste des equipements a interroger : carte control switch puis MSA.
 
-    La carte control switch n'est incluse que si ses identifiants sont
-    renseignes ; elle utilise un compte distinct de celui des MSA.
+    La carte control switch n'y figure que lorsqu'elle est relevée en SSH :
+    par defaut elle passe par son interface web, traitee separement.
     """
     equipements = []
     login_switch = (config.get("login_switch") or "").strip()
-    if login_switch:
+    if config.get("source_switch", SOURCE_SWITCH_WEB) == SOURCE_SWITCH_SSH and login_switch:
         equipements.append(
             {
                 "libelle": "Carte control switch",
                 "ip": ip_carte_switch(config["premiere_ip"]),
                 "login": login_switch,
                 "mot_de_passe": config.get("mot_de_passe_switch", ""),
+                "source": "SSH",
             }
         )
     for numero, ip in enumerate(liste_ip(config["premiere_ip"], config["nombre_msa"])):
@@ -330,6 +369,7 @@ def equipements_mac(config):
                 "ip": ip,
                 "login": config["login"],
                 "mot_de_passe": config["mot_de_passe"],
+                "source": "SSH",
             }
         )
     return equipements
@@ -337,6 +377,7 @@ def equipements_mac(config):
 
 def executer_campagne_mac(config, journal, sur_resultat=None, arret=None):
     """Relève les adresses MAC de la carte control switch et des MSA."""
+    source_switch = config.get("source_switch", SOURCE_SWITCH_WEB)
     equipements = equipements_mac(config)
     campagne = {
         "type": "mac",
@@ -344,10 +385,16 @@ def executer_campagne_mac(config, journal, sur_resultat=None, arret=None):
         "nombre_msa": config["nombre_msa"],
         "operateur": config.get("operateur", ""),
         "serie_nvr": config.get("serie_nvr", ""),
-        "carte_switch_relevee": bool((config.get("login_switch") or "").strip()),
+        "source_switch": source_switch,
         "date": datetime.datetime.now().isoformat(timespec="seconds"),
         "equipements": [],
     }
+    if source_switch == SOURCE_SWITCH_WEB:
+        resultat = relever_mac_switch_web(config, journal)
+        campagne["equipements"].append(resultat)
+        if sur_resultat is not None:
+            sur_resultat(resultat)
+
     for equipement in equipements:
         if arret is not None and arret.is_set():
             journal("Relevé des adresses MAC interrompu par l'operateur.")
@@ -360,7 +407,51 @@ def executer_campagne_mac(config, journal, sur_resultat=None, arret=None):
             config.get("port", 22),
             journal,
         )
+        resultat["source"] = equipement.get("source", "SSH")
         campagne["equipements"].append(resultat)
         if sur_resultat is not None:
             sur_resultat(resultat)
     return campagne
+
+
+def campagne_mac_depuis_page(chemin, config, journal):
+    """Construit un relevé a partir d'une page de l'interface web enregistrée.
+
+    Sert de recours lorsque l'authentification de l'interface web ne peut pas
+    etre automatisee : l'operateur enregistre la page depuis son navigateur
+    (Ctrl+S) et l'application en extrait les adresses.
+    """
+    with open(chemin, "r", encoding="utf-8", errors="replace") as fichier:
+        contenu = fichier.read()
+    interfaces = extraire_macs(contenu)
+    journal("Page enregistrée %s : %d adresse(s) MAC extraite(s)."
+            % (chemin, len(interfaces)))
+    if not interfaces:
+        raise ErreurWeb(
+            "Aucune adresse MAC trouvée dans %s." % os.path.basename(chemin)
+        )
+    for interface in interfaces:
+        journal("Page enregistrée : %s = %s"
+                % (interface["interface"], interface["mac"]))
+    return {
+        "type": "mac",
+        "premiere_ip": config.get("premiere_ip", ""),
+        "nombre_msa": config.get("nombre_msa", 0),
+        "operateur": config.get("operateur", ""),
+        "serie_nvr": config.get("serie_nvr", ""),
+        "source_switch": "page",
+        "date": datetime.datetime.now().isoformat(timespec="seconds"),
+        "equipements": [
+            {
+                "libelle": "Interface web du NVR",
+                "ip": ip_carte_switch(config["premiere_ip"])
+                if config.get("premiere_ip")
+                else "",
+                "url": os.path.basename(chemin),
+                "source": "page enregistrée",
+                "interfaces": interfaces,
+                "erreur": None,
+                "horodatage": datetime.datetime.now().isoformat(timespec="seconds"),
+            }
+        ],
+    }

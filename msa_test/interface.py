@@ -23,6 +23,10 @@ from .campagne import (
     alertes_avant_apres,
     comparer,
     executer_campagne,
+    SOURCE_SWITCH_AUCUNE,
+    SOURCE_SWITCH_SSH,
+    SOURCE_SWITCH_WEB,
+    campagne_mac_depuis_page,
     executer_campagne_mac,
     ip_carte_switch,
     liste_ip,
@@ -72,6 +76,8 @@ class Application(tk.Tk):
         self.var_port = tk.IntVar(value=22)
         self.var_operateur = tk.StringVar()
         self.var_serie = tk.StringVar()
+        self.var_source_switch = tk.StringVar(value=SOURCE_SWITCH_WEB)
+        self.var_url_web = tk.StringVar()
         self.var_login_switch = tk.StringVar()
         self.var_mdp_switch = tk.StringVar()
 
@@ -134,31 +140,79 @@ class Application(tk.Tk):
             row=3, column=3, sticky="w", columnspan=2, pady=(0, 8)
         )
 
-        ttk.Label(cadre, text="Login carte control switch").grid(
-            row=4, column=0, sticky="w", padx=8
-        )
-        ttk.Entry(cadre, textvariable=self.var_login_switch, width=20).grid(
-            row=4, column=1, sticky="w", pady=(0, 8)
-        )
-        ttk.Label(cadre, text="Mot de passe carte switch").grid(
-            row=4, column=2, sticky="w", padx=8
-        )
-        ttk.Entry(cadre, textvariable=self.var_mdp_switch, width=20, show="*").grid(
-            row=4, column=3, sticky="w", columnspan=2, pady=(0, 8)
-        )
-        ttk.Label(
-            cadre,
-            text="utilisés uniquement pour le relevé des adresses MAC",
-            foreground="#555555",
-        ).grid(row=5, column=0, columnspan=6, sticky="w", padx=8)
-
         self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
         self.etiquette_apercu.grid(
-            row=6, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
+            row=4, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
         )
+
+        self._construire_carte_switch()
         self.var_ip.trace_add("write", lambda *_: self._rafraichir_apercu())
         self.var_nombre.trace_add("write", lambda *_: self._rafraichir_apercu())
         self._rafraichir_apercu()
+
+    def _construire_carte_switch(self):
+        """Identifiants de la carte control switch, pour le relevé des MAC."""
+        cadre = ttk.LabelFrame(
+            self, text="Carte control switch (relevé des adresses MAC uniquement)"
+        )
+        cadre.pack(fill="x", padx=10, pady=(0, 6))
+
+        ttk.Label(cadre, text="Source :").grid(row=0, column=0, sticky="w", padx=8, pady=6)
+        for colonne, (valeur, libelle) in enumerate(
+            (
+                (SOURCE_SWITCH_WEB, "Interface web (identifiants web)"),
+                (SOURCE_SWITCH_SSH, "SSH (identifiants console)"),
+                (SOURCE_SWITCH_AUCUNE, "Ne pas relever"),
+            ),
+            start=1,
+        ):
+            ttk.Radiobutton(
+                cadre,
+                text=libelle,
+                value=valeur,
+                variable=self.var_source_switch,
+                command=self._rafraichir_carte_switch,
+            ).grid(row=0, column=colonne, sticky="w", padx=6)
+
+        self.etiquette_url = ttk.Label(cadre, text="URL de l'interface web")
+        self.etiquette_url.grid(row=1, column=0, sticky="w", padx=8)
+        self.champ_url = ttk.Entry(cadre, textvariable=self.var_url_web, width=34)
+        self.champ_url.grid(row=1, column=1, columnspan=2, sticky="w", pady=6)
+        self.etiquette_url_aide = ttk.Label(
+            cadre,
+            text="vide = http://<1ere IP moins 1>/ ; indiquer la page qui affiche "
+            "les adresses MAC",
+            foreground="#555555",
+        )
+        self.etiquette_url_aide.grid(row=2, column=1, columnspan=5, sticky="w")
+
+        self.etiquette_login_switch = ttk.Label(cadre, text="Login")
+        self.etiquette_login_switch.grid(row=1, column=3, sticky="w", padx=8)
+        self.champ_login_switch = ttk.Entry(
+            cadre, textvariable=self.var_login_switch, width=16
+        )
+        self.champ_login_switch.grid(row=1, column=4, sticky="w")
+
+        self.etiquette_mdp_switch = ttk.Label(cadre, text="Mot de passe")
+        self.etiquette_mdp_switch.grid(row=1, column=5, sticky="w", padx=8)
+        self.champ_mdp_switch = ttk.Entry(
+            cadre, textvariable=self.var_mdp_switch, width=16, show="*"
+        )
+        self.champ_mdp_switch.grid(row=1, column=6, sticky="w", padx=(0, 8))
+
+        self._rafraichir_carte_switch()
+
+    def _rafraichir_carte_switch(self):
+        """Active les champs correspondant a la source choisie."""
+        source = self.var_source_switch.get()
+        etat_url = "normal" if source == SOURCE_SWITCH_WEB else "disabled"
+        etat_identifiants = "disabled" if source == SOURCE_SWITCH_AUCUNE else "normal"
+        self.champ_url.configure(state=etat_url)
+        for widget in (self.champ_login_switch, self.champ_mdp_switch):
+            widget.configure(state=etat_identifiants)
+        self.etiquette_url_aide.configure(
+            foreground="#555555" if source == SOURCE_SWITCH_WEB else "#aaaaaa"
+        )
 
     def _construire_actions(self):
         cadre = ttk.Frame(self)
@@ -184,6 +238,13 @@ class Application(tk.Tk):
             command=self._lancer_mac,
         )
         self.bouton_mac.pack(side="left", padx=6)
+
+        self.bouton_import_mac = ttk.Button(
+            cadre,
+            text="MAC depuis une page enregistrée...",
+            command=self._importer_page_mac,
+        )
+        self.bouton_import_mac.pack(side="left", padx=6)
 
         self.bouton_arret = ttk.Button(
             cadre, text="Arreter", command=self._demander_arret, state="disabled"
@@ -328,6 +389,8 @@ class Application(tk.Tk):
         self.var_operateur.set(prefs.get("operateur", ""))
         self.var_serie.set(prefs.get("serie_nvr", ""))
         self.var_login_switch.set(prefs.get("login_switch", ""))
+        self.var_source_switch.set(prefs.get("source_switch", SOURCE_SWITCH_WEB))
+        self.var_url_web.set(prefs.get("url_web", ""))
 
     def _enregistrer_preferences(self):
         prefs = {
@@ -338,6 +401,8 @@ class Application(tk.Tk):
             "operateur": self.var_operateur.get(),
             "serie_nvr": self.var_serie.get(),
             "login_switch": self.var_login_switch.get(),
+            "source_switch": self.var_source_switch.get(),
+            "url_web": self.var_url_web.get(),
         }
         try:
             with open(self._chemin_preferences(), "w", encoding="utf-8") as fichier:
@@ -411,6 +476,10 @@ class Application(tk.Tk):
             "port": port,
             "operateur": self.var_operateur.get().strip(),
             "serie_nvr": self.var_serie.get().strip(),
+            "source_switch": self.var_source_switch.get(),
+            "url_web": self.var_url_web.get().strip(),
+            "login_web": self.var_login_switch.get().strip(),
+            "mot_de_passe_web": self.var_mdp_switch.get(),
             "login_switch": self.var_login_switch.get().strip(),
             "mot_de_passe_switch": self.var_mdp_switch.get(),
         }
@@ -454,18 +523,20 @@ class Application(tk.Tk):
         except ValueError as err:
             messagebox.showerror("Parametres incomplets", str(err))
             return
-        if config["login_switch"] and not config["mot_de_passe_switch"]:
+        source = config["source_switch"]
+        if source != SOURCE_SWITCH_AUCUNE and not (
+            config["login_switch"] and config["mot_de_passe_switch"]
+        ):
             messagebox.showerror(
                 "Parametres incomplets",
-                "Renseigner le mot de passe de la carte control switch, ou "
-                "laisser son login vide pour ne relever que les MSA.",
+                "Renseigner le login et le mot de passe de la carte control "
+                "switch, ou choisir « Ne pas relever ».",
             )
             return
-        if not config["login_switch"] and not messagebox.askyesno(
+        if source == SOURCE_SWITCH_AUCUNE and not messagebox.askyesno(
             "Carte control switch",
-            "Aucun identifiant n'est renseigné pour la carte control switch : "
-            "son adresse MAC ne sera pas relevée.\n\nContinuer avec les seuls "
-            "modules MSA ?",
+            "La carte control switch ne sera pas relevée.\n\nContinuer avec "
+            "les seuls modules MSA ?",
         ):
             return
 
@@ -480,6 +551,37 @@ class Application(tk.Tk):
             target=self._executer_mac, args=(config,), daemon=True
         )
         self.travail.start()
+
+    def _importer_page_mac(self):
+        """Extrait les adresses MAC d'une page de l'interface web enregistrée."""
+        chemin = filedialog.askopenfilename(
+            title="Choisir la page enregistrée depuis le navigateur",
+            filetypes=[
+                ("Page web enregistrée", "*.html *.htm *.txt"),
+                ("Tous les fichiers", "*.*"),
+            ],
+        )
+        if not chemin:
+            return
+        try:
+            config = self._lire_configuration(PHASE_AVANT)
+        except ValueError:
+            # Les identifiants SSH ne servent pas ici : on se contente des
+            # informations d'en-tete du rapport.
+            config = {
+                "premiere_ip": self.var_ip.get().strip(),
+                "nombre_msa": int(self.var_nombre.get() or 1),
+                "operateur": self.var_operateur.get().strip(),
+                "serie_nvr": self.var_serie.get().strip(),
+            }
+        try:
+            campagne = campagne_mac_depuis_page(chemin, config, self._tracer)
+            fichier, echecs = rapport.exporter_macs(campagne, self.racine)
+        except Exception as err:
+            messagebox.showerror("Import impossible", str(err))
+            return
+        self._tracer("Adresses MAC enregistrees : %s" % fichier)
+        self._terminer_mac(fichier, echecs)
 
     def _executer_mac(self, config):
         try:
@@ -603,6 +705,7 @@ class Application(tk.Tk):
         self.bouton_avant.configure(state=etat)
         self.bouton_apres.configure(state=etat)
         self.bouton_mac.configure(state=etat)
+        self.bouton_import_mac.configure(state=etat)
         self.bouton_arret.configure(state="disabled" if actif else "normal")
 
     # ------------------------------------------------------------------ #

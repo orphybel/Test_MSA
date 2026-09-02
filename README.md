@@ -50,9 +50,28 @@ Le bouton **Relever les adresses MAC** interroge, indépendamment des relevés
 SMART :
 
 - la **carte mère control switch**, dont l'adresse est celle qui précède
-  immédiatement la 1ʳᵉ adresse saisie (MSA0 `.187` → carte switch `.186`), avec
-  son **propre login et mot de passe** (champs dédiés) ;
-- chacun des modules MSA, avec les identifiants MSA.
+  immédiatement la 1ʳᵉ adresse saisie (MSA0 `.187` → carte switch `.186`) ;
+- chacun des modules MSA, en SSH avec les identifiants MSA.
+
+Trois sources sont proposées pour la carte control switch :
+
+| Source | Usage |
+|---|---|
+| **Interface web** (par défaut) | Les identifiants **web** du NVR suffisent — c'est le cas le plus courant, le mot de passe SSH de cette carte n'étant pas toujours connu. |
+| **SSH** | Si vous disposez du compte console de la carte. |
+| **Ne pas relever** | Seuls les modules MSA sont interrogés. |
+
+En mode interface web, l'application ouvre l'URL indiquée (vide =
+`http://<1ʳᵉ IP moins 1>/`), s'authentifie en **HTTP Basic** ou via le
+**formulaire de connexion** de la page — les champs et les jetons anti-rejeu
+cachés sont détectés automatiquement — puis extrait toutes les adresses MAC
+affichées, avec l'intitulé qui les précède dans la page. Indiquez l'URL exacte
+de la page qui affiche les adresses si ce n'est pas la page d'accueil.
+
+Si l'authentification de votre interface web ne peut pas être automatisée, le
+bouton **MAC depuis une page enregistrée...** extrait les adresses d'une page
+sauvegardée depuis le navigateur (Ctrl+S) ou d'un simple copier-coller dans un
+fichier texte.
 
 Toutes les interfaces réseau de chaque équipement sont listées avec leur
 adresse MAC dans un fichier texte
@@ -156,6 +175,7 @@ Organisation du code :
 - `msa_test/smart_parser.py` — extraction des RAW_VALUE ID#188 et ID#199 ;
 - `msa_test/campagne.py` — parcours des 1 à 6 MSA, comparaison avant/après et
   détection des valeurs non nulles ;
+- `msa_test/web_mac.py` — relevé des adresses MAC via l'interface web du NVR ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
 - `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.

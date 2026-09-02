@@ -253,10 +253,16 @@ def exporter_macs(campagne, racine=None):
         ecrire("N° de serie NVR : %s\n" % (campagne.get("serie_nvr") or "..."))
         ecrire("Operateur       : %s\n" % (campagne.get("operateur") or "..."))
         ecrire("Nombre de MSA   : %s\n" % campagne.get("nombre_msa", ""))
-        if not campagne.get("carte_switch_relevee"):
+        source = campagne.get("source_switch")
+        if source == "aucune":
+            ecrire("\nCarte control switch : non relevée (choix de l'operateur).\n")
+        elif source == "web":
+            ecrire("\nCarte control switch : relevée via son interface web.\n")
+        elif source == "ssh":
+            ecrire("\nCarte control switch : relevée en SSH.\n")
+        elif source == "page":
             ecrire(
-                "\nCarte control switch : non relevée (identifiants non "
-                "renseignés).\n"
+                "\nAdresses extraites d'une page de l'interface web enregistrée.\n"
             )
         ecrire("\n")
 
@@ -264,22 +270,37 @@ def exporter_macs(campagne, racine=None):
         equipements = _tries_par_ip(campagne.get("equipements", []))
         ecrire("RECAPITULATIF\n")
         ecrire("-" * 78 + "\n")
-        ecrire("%-16s %-24s %s\n" % ("ADRESSE IP", "EQUIPEMENT", "ADRESSE(S) MAC"))
+        ecrire(
+            "%-16s %-24s %-16s %s\n"
+            % ("ADRESSE IP", "EQUIPEMENT", "SOURCE", "ADRESSE(S) MAC")
+        )
         for equipement in equipements:
             if equipement.get("erreur"):
                 macs = "NON RELEVE"
             else:
                 macs = ", ".join(i["mac"] for i in equipement["interfaces"]) or "aucune"
             ecrire(
-                "%-16s %-24s %s\n"
-                % (equipement["ip"], equipement["libelle"], macs)
+                "%-16s %-24s %-16s %s\n"
+                % (
+                    equipement["ip"],
+                    equipement["libelle"],
+                    equipement.get("source", "SSH"),
+                    macs,
+                )
             )
         ecrire("\n")
 
         ecrire("DETAIL PAR EQUIPEMENT\n")
         for equipement in equipements:
             ecrire("-" * 78 + "\n")
-            ecrire("%s (%s)\n" % (equipement["libelle"], equipement["ip"]))
+            ecrire(
+                "%s (%s) - source : %s\n"
+                % (
+                    equipement["libelle"],
+                    equipement.get("url") or equipement["ip"],
+                    equipement.get("source", "SSH"),
+                )
+            )
             if equipement.get("erreur"):
                 ecrire("  ECHEC : %s\n" % equipement["erreur"])
                 echecs += 1
