@@ -8,6 +8,7 @@ import json
 import os
 import re
 
+from .stockage import formater_capacite
 from .campagne import (
     LIBELLE_PHASE,
     PARTITIONS,
@@ -328,6 +329,84 @@ def exporter_macs(campagne, racine=None):
         else:
             ecrire("Tous les equipements ont ete relevés.\n")
     return chemin, echecs
+
+
+def exporter_stockage(campagne, racine=None):
+    """Ecrit le relevé des capacites de stockage dans un fichier texte.
+
+    Retourne (chemin, nombre de modules non conformes ou non relevés).
+    """
+    nom = "capacite_stockage%s_%s.txt" % (
+        fragment_nom(campagne.get("serie_nvr")),
+        _horodatage(campagne),
+    )
+    chemin = os.path.join(dossier_resultats(racine), nom)
+    minimum = campagne.get("capacite_minimale_mo")
+    anomalies = 0
+
+    with open(chemin, "w", encoding="utf-8") as fichier:
+        ecrire = fichier.write
+        ecrire("RELEVE DE LA CAPACITE DE STOCKAGE\n")
+        ecrire("Modules CPU enregistreur - procedure X301773\n")
+        ecrire("Requete : GET http://<module>:8080/storage/status\n")
+        ecrire("=" * 90 + "\n\n")
+        ecrire("Date            : %s\n" % campagne.get("date", ""))
+        ecrire("N° de serie NVR : %s\n" % (campagne.get("serie_nvr") or "..."))
+        ecrire("Operateur       : %s\n" % (campagne.get("operateur") or "..."))
+        ecrire("Nombre de MSA   : %s\n" % campagne.get("nombre_msa", ""))
+        if minimum:
+            ecrire(
+                "Capacite minimale attendue : %s\n" % formater_capacite(minimum)
+            )
+        else:
+            ecrire(
+                "Capacite minimale attendue : non renseignée - les capacites "
+                "sont relevées sans sanction.\n"
+            )
+        ecrire("\n")
+
+        ecrire("%-8s %-16s %-34s %s\n" % ("MSA", "ADRESSE IP", "CAPACITE", "SANCTION"))
+        ecrire("-" * 90 + "\n")
+        for module in campagne.get("modules", []):
+            ecrire(
+                "%-8s %-16s %-34s %s\n"
+                % (
+                    "MSA%d" % module["msa"],
+                    module["ip"],
+                    formater_capacite(module["capacite_mo"]),
+                    module["sanction"][:60],
+                )
+            )
+            if module["conforme"] is False:
+                anomalies += 1
+
+        entrees = [m for m in campagne.get("modules", []) if m.get("entrees")]
+        if entrees:
+            ecrire("\nDETAIL DES ENTREES DISQUE\n")
+            for module in entrees:
+                ecrire("-" * 90 + "\n")
+                ecrire("MSA%d (%s)\n" % (module["msa"], module["ip"]))
+                for index, entree in enumerate(module["entrees"]):
+                    ecrire("  entrée %d : %s\n" % (index, _resumer(entree)))
+
+        ecrire("\n" + "=" * 90 + "\n")
+        if anomalies:
+            ecrire(
+                "ATTENTION : %d module(s) non conforme(s) ou non relevé(s).\n"
+                % anomalies
+            )
+        elif minimum:
+            ecrire("Tous les modules atteignent la capacite minimale attendue.\n")
+        else:
+            ecrire("Capacites relevées - a reporter sur la Fiche de Test.\n")
+    return chemin, anomalies
+
+
+def _resumer(entree):
+    """Rend lisible une entrée disque quel que soit son contenu."""
+    if isinstance(entree, dict):
+        return ", ".join("%s = %s" % (cle, valeur) for cle, valeur in entree.items())
+    return str(entree)
 
 
 def libelle_phase(phase):

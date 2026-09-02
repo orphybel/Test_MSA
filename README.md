@@ -45,6 +45,27 @@ restent à la charge de l'opérateur.
 Le bouton **Ouvrir le rapport visuel** réaffiche à tout moment le dernier
 rapport généré.
 
+## Capacité de stockage
+
+Le bouton **Capacité de stockage** envoie à chaque module CPU enregistreur la
+requête de la procédure — celle passée manuellement sous INSOMNIA :
+
+```
+GET http://<adresse du MSA>:8080/storage/status
+```
+
+La valeur `capacity` de la réponse JSON est relevée et affichée en Mo, Go et
+To (exemple de la procédure : `3 755 205 Mo`), avec le détail des
+`hdd_status_entries` renvoyées. Le résultat est écrit dans
+`capacite_stockage_<n° de série>_<horodatage>.txt`, ouvert en fin de relevé.
+
+Le champ **Capacité mini (Mo)** fixe le seuil de la sanction : chaque module
+est marqué `SUFFISANTE` ou `INSUFFISANTE`. La procédure demande de vérifier que
+la capacité est « suffisante » sans donner de valeur : **laissé vide, le champ
+n'entraîne aucune sanction** et les capacités sont seulement relevées, à
+comparer sur la Fiche de Test. Un module injoignable est reporté en
+`NON RELEVE` sans interrompre les autres.
+
 ## Relevé des adresses MAC
 
 Le bouton **Relever les adresses MAC** interroge, indépendamment des relevés
@@ -148,6 +169,7 @@ numéro n'est saisi :
 - `PV_comparaison_*.txt` — synthèse avant/après avec la conclusion, à reporter
   sur le PV de test ;
 - `adresses_MAC_*.txt` — relevé des adresses MAC (voir ci-dessus) ;
+- `capacite_stockage_*.txt` — capacité de chaque module CPU enregistreur ;
 - `rapport_avant_*.html` / `rapport_avant_apres_*.html` — rapport visuel
   (voir ci-dessus), ouvert automatiquement en fin de campagne.
 
@@ -188,6 +210,7 @@ Organisation du code :
 - `msa_test/campagne.py` — parcours des 1 à 6 MSA, comparaison avant/après et
   détection des valeurs non nulles ;
 - `msa_test/web_mac.py` — relevé des adresses MAC via l'interface web du NVR ;
+- `msa_test/stockage.py` — requête `:8080/storage/status` et capacité relevée ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
 - `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.

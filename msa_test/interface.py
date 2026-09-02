@@ -28,6 +28,7 @@ from .campagne import (
     SOURCE_SWITCH_WEB,
     campagne_mac_depuis_page,
     executer_campagne_mac,
+    executer_campagne_stockage,
     liste_ip,
 )
 
@@ -74,6 +75,7 @@ class Application(tk.Tk):
         self.var_mdp_root = tk.StringVar()
         self.var_port = tk.IntVar(value=22)
         self.var_operateur = tk.StringVar()
+        self.var_capacite_min = tk.StringVar()
         self.var_serie = tk.StringVar()
         self.var_source_switch = tk.StringVar(value=SOURCE_SWITCH_WEB)
         self.var_url_web = tk.StringVar()
@@ -136,7 +138,13 @@ class Application(tk.Tk):
         )
         ttk.Label(cadre, text="Operateur (PV)").grid(row=3, column=2, sticky="w", padx=8)
         ttk.Entry(cadre, textvariable=self.var_operateur, width=20).grid(
-            row=3, column=3, sticky="w", columnspan=2, pady=(0, 8)
+            row=3, column=3, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(cadre, text="Capacite mini (Mo)").grid(
+            row=3, column=4, sticky="w", padx=8
+        )
+        ttk.Entry(cadre, textvariable=self.var_capacite_min, width=12).grid(
+            row=3, column=5, sticky="w", pady=(0, 8)
         )
 
         self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
@@ -237,6 +245,13 @@ class Application(tk.Tk):
             command=self._lancer_mac,
         )
         self.bouton_mac.pack(side="left", padx=6)
+
+        self.bouton_stockage = ttk.Button(
+            cadre,
+            text="Capacité de stockage",
+            command=self._lancer_stockage,
+        )
+        self.bouton_stockage.pack(side="left", padx=6)
 
         self.bouton_import_mac = ttk.Button(
             cadre,
@@ -385,6 +400,7 @@ class Application(tk.Tk):
         self.var_port.set(prefs.get("port", 22))
         self.var_operateur.set(prefs.get("operateur", ""))
         self.var_serie.set(prefs.get("serie_nvr", ""))
+        self.var_capacite_min.set(prefs.get("capacite_minimale_mo", ""))
         self.var_login_switch.set(prefs.get("login_switch", ""))
         self.var_source_switch.set(prefs.get("source_switch", SOURCE_SWITCH_WEB))
         self.var_url_web.set(prefs.get("url_web", ""))
@@ -397,6 +413,7 @@ class Application(tk.Tk):
             "port": int(self.var_port.get()),
             "operateur": self.var_operateur.get(),
             "serie_nvr": self.var_serie.get(),
+            "capacite_minimale_mo": self.var_capacite_min.get(),
             "login_switch": self.var_login_switch.get(),
             "source_switch": self.var_source_switch.get(),
             "url_web": self.var_url_web.get(),
@@ -463,6 +480,16 @@ class Application(tk.Tk):
             port = int(self.var_port.get())
         except (ValueError, tk.TclError):
             raise ValueError("Le nombre de MSA et le port doivent etre numeriques.")
+        capacite_minimale = None
+        saisie = self.var_capacite_min.get().strip().replace(" ", "")
+        if saisie:
+            try:
+                capacite_minimale = int(saisie)
+            except ValueError:
+                raise ValueError(
+                    "La capacite minimale doit etre un nombre de Mo "
+                    "(exemple : 3500000), ou rester vide."
+                )
         liste_ip(ip, nombre)  # valide l'adresse et la plage 1..6
         return {
             "phase": phase,
@@ -474,6 +501,7 @@ class Application(tk.Tk):
             "port": port,
             "operateur": self.var_operateur.get().strip(),
             "serie_nvr": self.var_serie.get().strip(),
+            "capacite_minimale_mo": capacite_minimale,
             "source_switch": self.var_source_switch.get(),
             "url_web": self.var_url_web.get().strip(),
             "login_web": self.var_login_switch.get().strip(),
@@ -550,6 +578,64 @@ class Application(tk.Tk):
         )
         self.travail.start()
 
+    def _lancer_stockage(self):
+        """Relève la capacite de stockage de chaque module CPU enregistreur."""
+        if self.travail is not None and self.travail.is_alive():
+            return
+        try:
+            config = self._lire_configuration(PHASE_AVANT)
+        except ValueError as err:
+            messagebox.showerror("Parametres incomplets", str(err))
+            return
+
+        self._enregistrer_preferences()
+        self.arret.clear()
+        self._basculer_boutons(actif=False)
+        self.etiquette_etat.configure(text="Relevé des capacites en cours...")
+        self._tracer("")
+        self._tracer("=== Capacité de stockage (GET :8080/storage/status) ===")
+
+        self.travail = threading.Thread(
+            target=self._executer_stockage, args=(config,), daemon=True
+        )
+        self.travail.start()
+
+    def _executer_stockage(self, config):
+        try:
+            campagne = executer_campagne_stockage(
+                config, journal=self._tracer, arret=self.arret
+            )
+            chemin, anomalies = rapport.exporter_stockage(campagne, self.racine)
+            self._tracer("Capacites enregistrees : %s" % chemin)
+            self.after(0, self._terminer_stockage, chemin, anomalies)
+        except Exception as err:
+            self._tracer("ERREUR : %s" % err)
+            self.after(0, self._echouer, err)
+
+    def _terminer_stockage(self, chemin, anomalies):
+        self._basculer_boutons(actif=True)
+        if anomalies:
+            self.etiquette_etat.configure(
+                text="Capacité : %d module(s) non conforme(s) ou non relevé(s)."
+                % anomalies
+            )
+            messagebox.showwarning(
+                "Capacité de stockage",
+                "%d module(s) n'atteignent pas la capacité attendue ou n'ont "
+                "pas pu être interrogés.\n\nFichier :\n%s" % (anomalies, chemin),
+            )
+        else:
+            self.etiquette_etat.configure(text="Capacités de stockage relevées.")
+            messagebox.showinfo(
+                "Capacité de stockage",
+                "Capacités relevées pour tous les modules.\n\nFichier :\n%s"
+                % chemin,
+            )
+        try:
+            ouvrir_dans_l_explorateur(chemin)
+        except Exception as err:
+            self._tracer("Ouverture du fichier impossible : %s" % err)
+
     def _importer_page_mac(self):
         """Extrait les adresses MAC d'une page de l'interface web enregistrée."""
         chemin = filedialog.askopenfilename(
@@ -571,6 +657,7 @@ class Application(tk.Tk):
                 "nombre_msa": int(self.var_nombre.get() or 1),
                 "operateur": self.var_operateur.get().strip(),
                 "serie_nvr": self.var_serie.get().strip(),
+            "capacite_minimale_mo": capacite_minimale,
             }
         try:
             campagne = campagne_mac_depuis_page(chemin, config, self._tracer)
@@ -704,6 +791,7 @@ class Application(tk.Tk):
         self.bouton_apres.configure(state=etat)
         self.bouton_mac.configure(state=etat)
         self.bouton_import_mac.configure(state=etat)
+        self.bouton_stockage.configure(state=etat)
         self.bouton_arret.configure(state="disabled" if actif else "normal")
 
     # ------------------------------------------------------------------ #

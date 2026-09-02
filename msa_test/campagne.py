@@ -15,6 +15,7 @@ from .smart_parser import (
     valeur_est_nulle,
 )
 from .ssh_client import ErreurMSA, SessionMSA
+from .stockage import ErreurStockage, formater_capacite, interroger, verdict
 from .web_mac import ErreurWeb, extraire_macs, normaliser_url, relever_macs_web
 
 NB_MSA_MAX = 6
@@ -450,3 +451,78 @@ def campagne_mac_depuis_page(chemin, config, journal):
             }
         ],
     }
+
+
+# ---------------------------------------------------------------------- #
+# Capacite de stockage (GET http://<MSA>:8080/storage/status)
+# ---------------------------------------------------------------------- #
+def relever_stockage(msa, ip, config, journal):
+    """Interroge un module CPU enregistreur sur sa capacite de stockage."""
+    resultat = {
+        "msa": msa,
+        "ip": ip,
+        "capacite_mo": None,
+        "entrees": [],
+        "sanction": "",
+        "conforme": None,
+        "erreur": None,
+        "horodatage": datetime.datetime.now().isoformat(timespec="seconds"),
+    }
+    try:
+        journal("MSA%d (%s) : GET %s:8080/storage/status" % (msa, ip, ip))
+        releve = interroger(
+            ip,
+            config.get("port_stockage", 8080),
+            config.get("login"),
+            config.get("mot_de_passe"),
+        )
+        resultat["capacite_mo"] = releve["capacite_mo"]
+        resultat["entrees"] = releve["entrees"]
+        resultat["url"] = releve["url"]
+        journal(
+            "MSA%d (%s) : capacite = %s"
+            % (msa, ip, formater_capacite(releve["capacite_mo"]))
+        )
+        if releve["entrees"]:
+            journal(
+                "MSA%d (%s) : %d entrée(s) disque signalée(s)"
+                % (msa, ip, len(releve["entrees"]))
+            )
+    except ErreurStockage as err:
+        resultat["erreur"] = str(err)
+        journal("MSA%d (%s) : ECHEC - %s" % (msa, ip, err))
+    except Exception as err:  # un module en echec n'arrete pas la campagne
+        resultat["erreur"] = "Erreur inattendue : %s" % err
+        journal("MSA%d (%s) : ECHEC - %s" % (msa, ip, err))
+
+    sanction, conforme = verdict(
+        resultat["capacite_mo"], config.get("capacite_minimale_mo")
+    )
+    if resultat["erreur"]:
+        sanction, conforme = "NON RELEVE (%s)" % resultat["erreur"], False
+    resultat["sanction"] = sanction
+    resultat["conforme"] = conforme
+    return resultat
+
+
+def executer_campagne_stockage(config, journal, sur_resultat=None, arret=None):
+    """Relève la capacite de stockage de chaque module CPU enregistreur."""
+    campagne = {
+        "type": "stockage",
+        "ip_switch": config["ip_switch"],
+        "nombre_msa": config["nombre_msa"],
+        "operateur": config.get("operateur", ""),
+        "serie_nvr": config.get("serie_nvr", ""),
+        "capacite_minimale_mo": config.get("capacite_minimale_mo"),
+        "date": datetime.datetime.now().isoformat(timespec="seconds"),
+        "modules": [],
+    }
+    for msa, ip in enumerate(liste_ip(config["ip_switch"], config["nombre_msa"])):
+        if arret is not None and arret.is_set():
+            journal("Relevé des capacites interrompu par l'operateur.")
+            break
+        resultat = relever_stockage(msa, ip, config, journal)
+        campagne["modules"].append(resultat)
+        if sur_resultat is not None:
+            sur_resultat(resultat)
+    return campagne
