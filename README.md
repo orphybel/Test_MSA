@@ -184,10 +184,15 @@ numéro n'est saisi :
 - `rapport_avant_*.html` / `rapport_avant_apres_*.html` — rapport visuel
   (voir ci-dessus), ouvert automatiquement en fin de campagne.
 
-Aucun mot de passe n'est écrit sur disque. Seuls l'adresse IP, le nombre de
-MSA, le login, le port, l'opérateur et le n° de série du NVR sont mémorisés
-dans `preferences_msa.json` — le numéro est ainsi conservé entre le relevé
-« avant » et le relevé « après », deux heures plus tard.
+Tous les champs saisis sont mémorisés dans `preferences_msa.json` (à côté de
+l'exécutable) et rechargés au démarrage. Par défaut les mots de passe **ne
+sont pas** enregistrés ; cochez **« Mémoriser les champs et mots de passe »**
+en bas des actions pour les conserver d'une session à l'autre.
+
+> Les mots de passe sont alors écrits dans le fichier, encodés en base64. Ce
+> n'est **pas du chiffrement** : quiconque a accès au fichier peut les
+> retrouver. N'activez cette option que sur un poste de confiance. Décocher la
+> case retire les mots de passe du fichier au prochain enregistrement.
 
 ## Construction de l'exécutable
 

@@ -4,6 +4,7 @@ Automatise les etapes 12 a 15 (relevé avant enregistrement) et l'etape 24
 (relevé apres enregistrement + comparaison) pour 1 a 6 modules MSA.
 """
 
+import base64
 import json
 import os
 import queue
@@ -37,12 +38,24 @@ FICHIER_PREFS = "preferences_msa.json"
 IP_PAR_DEFAUT = "192.168.0.186"
 
 
+def _encoder(texte):
+    """Encode un mot de passe en base64 (obfuscation, pas du chiffrement)."""
+    return base64.b64encode(texte.encode("utf-8")).decode("ascii")
+
+
+def _decoder(stocke):
+    try:
+        return base64.b64decode(stocke.encode("ascii")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return ""
+
+
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Test MSA - Procedure X301773 (etapes 12 a 15 et 24)")
-        self.geometry("1080x740")
-        self.minsize(940, 640)
+        self.geometry("900x800")
+        self.minsize(760, 680)
 
         self.racine = racine_application()
         self.file_journal = queue.Queue()
@@ -84,88 +97,57 @@ class Application(tk.Tk):
         self.var_url_web = tk.StringVar()
         self.var_login_switch = tk.StringVar()
         self.var_mdp_switch = tk.StringVar()
+        self.var_memoriser_mdp = tk.BooleanVar(value=False)
 
-        ttk.Label(cadre, text="Adresse IP carte Controle/Switch *").grid(
-            row=0, column=0, sticky="w", padx=8, pady=6
-        )
-        ttk.Entry(cadre, textvariable=self.var_ip, width=20).grid(
-            row=0, column=1, sticky="w", pady=6
-        )
+        # Deux paires "libellé + champ" par ligne : la fenetre reste compacte.
+        def paire(libelle, variable, colonne, ligne, largeur=20, secret=False, aide=""):
+            ttk.Label(cadre, text=libelle).grid(
+                row=ligne, column=colonne * 2, sticky="w", padx=(8, 4), pady=4
+            )
+            champ = ttk.Entry(
+                cadre, textvariable=variable, width=largeur, show="*" if secret else ""
+            )
+            champ.grid(row=ligne, column=colonne * 2 + 1, sticky="w", pady=4)
+            if aide:
+                ttk.Label(cadre, text=aide, foreground="#777777").grid(
+                    row=ligne + 1, column=colonne * 2 + 1, sticky="w", pady=(0, 2)
+                )
+            return champ
 
-        ttk.Label(cadre, text="Nombre de MSA testés (1 a %d) *" % NB_MSA_MAX).grid(
-            row=0, column=2, sticky="w", padx=8
+        paire("Adresse IP Contrôle/Switch *", self.var_ip, 0, 0)
+        ttk.Label(cadre, text="Nombre de MSA (1 à %d) *" % NB_MSA_MAX).grid(
+            row=0, column=2, sticky="w", padx=(8, 4)
         )
         ttk.Spinbox(
-            cadre,
-            from_=1,
-            to=NB_MSA_MAX,
-            textvariable=self.var_nombre,
-            width=6,
+            cadre, from_=1, to=NB_MSA_MAX, textvariable=self.var_nombre, width=6,
             command=self._rafraichir_apercu,
         ).grid(row=0, column=3, sticky="w")
 
-        ttk.Label(cadre, text="Port SSH").grid(row=0, column=4, sticky="w", padx=8)
+        paire("Login SSH *", self.var_login, 0, 2)
+        paire("Mot de passe SSH *", self.var_mdp, 1, 2, secret=True)
+
+        paire(
+            "Mot de passe root (su)", self.var_mdp_root, 0, 4, secret=True,
+            aide="vide = identique au mot de passe SSH",
+        )
+        ttk.Label(cadre, text="Port SSH").grid(row=4, column=2, sticky="w", padx=(8, 4))
         ttk.Entry(cadre, textvariable=self.var_port, width=6).grid(
-            row=0, column=5, sticky="w"
+            row=4, column=3, sticky="w"
         )
 
-        ttk.Label(cadre, text="Login SSH *").grid(
-            row=1, column=0, sticky="w", padx=8, pady=6
-        )
-        ttk.Entry(cadre, textvariable=self.var_login, width=20).grid(
-            row=1, column=1, sticky="w", pady=6
-        )
+        paire("N° de série du NVR", self.var_serie, 0, 6)
+        paire("Opérateur (PV)", self.var_operateur, 1, 6)
 
-        ttk.Label(cadre, text="Mot de passe *").grid(row=1, column=2, sticky="w", padx=8)
-        ttk.Entry(cadre, textvariable=self.var_mdp, width=20, show="*").grid(
-            row=1, column=3, sticky="w", columnspan=2
-        )
+        paire("Login REST (capacité)", self.var_login_rest, 0, 7)
+        paire("Mot de passe REST", self.var_mdp_rest, 1, 7, secret=True)
 
-        ttk.Label(cadre, text="Mot de passe root (su)").grid(
-            row=2, column=0, sticky="w", padx=8, pady=6
-        )
-        ttk.Entry(cadre, textvariable=self.var_mdp_root, width=20, show="*").grid(
-            row=2, column=1, sticky="w", pady=6
-        )
-        ttk.Label(
-            cadre,
-            text="laisser vide si identique au mot de passe SSH",
-            foreground="#555555",
-        ).grid(row=2, column=2, columnspan=4, sticky="w", padx=8)
+        paire("Capacité mini (Ko)", self.var_capacite_min, 0, 8, largeur=14)
 
-        ttk.Label(cadre, text="N° de serie du NVR").grid(
-            row=3, column=0, sticky="w", padx=8
+        self.etiquette_apercu = ttk.Label(
+            cadre, text="", foreground="#00693e", wraplength=560, justify="left"
         )
-        ttk.Entry(cadre, textvariable=self.var_serie, width=20).grid(
-            row=3, column=1, sticky="w", pady=(0, 8)
-        )
-        ttk.Label(cadre, text="Operateur (PV)").grid(row=3, column=2, sticky="w", padx=8)
-        ttk.Entry(cadre, textvariable=self.var_operateur, width=20).grid(
-            row=3, column=3, sticky="w", pady=(0, 8)
-        )
-        ttk.Label(cadre, text="Capacite mini (Ko)").grid(
-            row=3, column=4, sticky="w", padx=8
-        )
-        ttk.Entry(cadre, textvariable=self.var_capacite_min, width=12).grid(
-            row=3, column=5, sticky="w", pady=(0, 8)
-        )
-
-        ttk.Label(cadre, text="Login REST (capacité)").grid(
-            row=4, column=0, sticky="w", padx=8
-        )
-        ttk.Entry(cadre, textvariable=self.var_login_rest, width=20).grid(
-            row=4, column=1, sticky="w", pady=(0, 8)
-        )
-        ttk.Label(cadre, text="Mot de passe REST").grid(
-            row=4, column=2, sticky="w", padx=8
-        )
-        ttk.Entry(cadre, textvariable=self.var_mdp_rest, width=20, show="*").grid(
-            row=4, column=3, sticky="w", pady=(0, 8)
-        )
-
-        self.etiquette_apercu = ttk.Label(cadre, text="", foreground="#00693e")
         self.etiquette_apercu.grid(
-            row=5, column=0, columnspan=6, sticky="w", padx=8, pady=(0, 8)
+            row=9, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 8)
         )
 
         self._construire_carte_switch()
@@ -198,30 +180,37 @@ class Application(tk.Tk):
             ).grid(row=0, column=colonne, sticky="w", padx=6)
 
         self.etiquette_url = ttk.Label(cadre, text="URL de l'interface web")
-        self.etiquette_url.grid(row=1, column=0, sticky="w", padx=8)
-        self.champ_url = ttk.Entry(cadre, textvariable=self.var_url_web, width=34)
-        self.champ_url.grid(row=1, column=1, columnspan=2, sticky="w", pady=6)
-        self.etiquette_url_aide = ttk.Label(
-            cadre,
-            text="vide = http://<adresse Controle/Switch>/cgi-bin/cgi_fh?URL="
-            "SUAdminVersions (page Administration : Versions)",
-            foreground="#555555",
+        self.etiquette_url.grid(row=1, column=0, sticky="w", padx=8, pady=(6, 0))
+        self.champ_url = ttk.Entry(cadre, textvariable=self.var_url_web, width=48)
+        self.champ_url.grid(
+            row=1, column=1, columnspan=3, sticky="w", pady=(6, 0)
         )
-        self.etiquette_url_aide.grid(row=2, column=1, columnspan=5, sticky="w")
 
         self.etiquette_login_switch = ttk.Label(cadre, text="Login")
-        self.etiquette_login_switch.grid(row=1, column=3, sticky="w", padx=8)
+        self.etiquette_login_switch.grid(row=2, column=0, sticky="w", padx=8, pady=4)
         self.champ_login_switch = ttk.Entry(
-            cadre, textvariable=self.var_login_switch, width=16
+            cadre, textvariable=self.var_login_switch, width=18
         )
-        self.champ_login_switch.grid(row=1, column=4, sticky="w")
+        self.champ_login_switch.grid(row=2, column=1, sticky="w")
 
         self.etiquette_mdp_switch = ttk.Label(cadre, text="Mot de passe")
-        self.etiquette_mdp_switch.grid(row=1, column=5, sticky="w", padx=8)
+        self.etiquette_mdp_switch.grid(row=2, column=2, sticky="w", padx=8)
         self.champ_mdp_switch = ttk.Entry(
-            cadre, textvariable=self.var_mdp_switch, width=16, show="*"
+            cadre, textvariable=self.var_mdp_switch, width=18, show="*"
         )
-        self.champ_mdp_switch.grid(row=1, column=6, sticky="w", padx=(0, 8))
+        self.champ_mdp_switch.grid(row=2, column=3, sticky="w", padx=(0, 8))
+
+        self.etiquette_url_aide = ttk.Label(
+            cadre,
+            text="vide = page « Administration : Versions » de la carte "
+            "(…/cgi-bin/cgi_fh?URL=SUAdminVersions)",
+            foreground="#777777",
+            wraplength=560,
+            justify="left",
+        )
+        self.etiquette_url_aide.grid(
+            row=3, column=0, columnspan=4, sticky="w", padx=8, pady=(0, 6)
+        )
 
         self._rafraichir_carte_switch()
 
@@ -238,63 +227,92 @@ class Application(tk.Tk):
         )
 
     def _construire_actions(self):
-        cadre = ttk.Frame(self)
+        cadre = ttk.LabelFrame(self, text="Actions")
         cadre.pack(fill="x", padx=10, pady=4)
+        for colonne in range(3):
+            cadre.grid_columnconfigure(colonne, weight=1, uniform="actions")
 
-        self.bouton_avant = ttk.Button(
-            cadre,
-            text="1. Relevé AVANT enregistrement (etapes 12 a 15)",
-            command=lambda: self._lancer(PHASE_AVANT),
+        # Chaque bouton occupe une cellule de largeur egale : la fenetre n'a
+        # plus besoin d'etre large, les groupes s'empilent sur trois colonnes.
+        def bouton(parent, texte, commande, colonne, ligne, **kw):
+            b = ttk.Button(parent, text=texte, command=commande, **kw)
+            b.grid(row=ligne, column=colonne, sticky="ew", padx=4, pady=3)
+            return b
+
+        # -- Groupe 1 : test SMART de la procedure -------------------- #
+        smart = ttk.LabelFrame(cadre, text="Test SMART (procédure X301773)")
+        smart.grid(row=0, column=0, sticky="nsew", padx=(6, 4), pady=6)
+        smart.grid_columnconfigure(0, weight=1)
+        self.bouton_avant = bouton(
+            smart,
+            "1. Relevé AVANT\n(étapes 12 à 15)",
+            lambda: self._lancer(PHASE_AVANT),
+            0,
+            0,
         )
-        self.bouton_avant.pack(side="left", padx=(0, 6))
-
-        self.bouton_apres = ttk.Button(
-            cadre,
-            text="2. Relevé APRES enregistrement (etape 24)",
-            command=lambda: self._lancer(PHASE_APRES),
+        self.bouton_apres = bouton(
+            smart,
+            "2. Relevé APRÈS\n(étape 24)",
+            lambda: self._lancer(PHASE_APRES),
+            0,
+            1,
         )
-        self.bouton_apres.pack(side="left", padx=6)
-
-        self.bouton_mac = ttk.Button(
-            cadre,
-            text="Relever les adresses MAC",
-            command=self._lancer_mac,
+        self.bouton_arret = bouton(
+            smart, "Arrêter", self._demander_arret, 0, 2, state="disabled"
         )
-        self.bouton_mac.pack(side="left", padx=6)
 
-        self.bouton_stockage = ttk.Button(
-            cadre,
-            text="Capacité de stockage",
-            command=self._lancer_stockage,
+        # -- Groupe 2 : relevés reseau et stockage -------------------- #
+        reseau = ttk.LabelFrame(cadre, text="Adresses MAC et stockage")
+        reseau.grid(row=0, column=1, sticky="nsew", padx=4, pady=6)
+        reseau.grid_columnconfigure(0, weight=1)
+        self.bouton_mac = bouton(
+            reseau, "Relever les adresses MAC", self._lancer_mac, 0, 0
         )
-        self.bouton_stockage.pack(side="left", padx=6)
-
-        self.bouton_import_mac = ttk.Button(
-            cadre,
-            text="MAC depuis une page enregistrée...",
-            command=self._importer_page_mac,
+        self.bouton_stockage = bouton(
+            reseau, "Capacité de stockage", self._lancer_stockage, 0, 1
         )
-        self.bouton_import_mac.pack(side="left", padx=6)
-
-        self.bouton_arret = ttk.Button(
-            cadre, text="Arreter", command=self._demander_arret, state="disabled"
+        self.bouton_import_mac = bouton(
+            reseau, "MAC depuis une page\nenregistrée...", self._importer_page_mac, 0, 2
         )
-        self.bouton_arret.pack(side="left", padx=6)
 
-        ttk.Button(
-            cadre, text="Charger un relevé AVANT...", command=self._charger_avant_fichier
-        ).pack(side="left", padx=6)
-
-        self.bouton_rapport = ttk.Button(
-            cadre,
-            text="Ouvrir le rapport visuel",
-            command=self._ouvrir_rapport,
+        # -- Groupe 3 : rapports et fichiers -------------------------- #
+        fichiers = ttk.LabelFrame(cadre, text="Rapports et fichiers")
+        fichiers.grid(row=0, column=2, sticky="nsew", padx=(4, 6), pady=6)
+        fichiers.grid_columnconfigure(0, weight=1)
+        self.bouton_rapport = bouton(
+            fichiers,
+            "Ouvrir le rapport visuel",
+            self._ouvrir_rapport,
+            0,
+            0,
             state="disabled",
         )
-        self.bouton_rapport.pack(side="left", padx=6)
+        bouton(
+            fichiers,
+            "Charger un relevé AVANT...",
+            self._charger_avant_fichier,
+            0,
+            1,
+        )
+        bouton(
+            fichiers,
+            "Ouvrir le dossier des résultats",
+            self._ouvrir_dossier_resultats,
+            0,
+            2,
+        )
 
-        self.etiquette_avant = ttk.Label(cadre, text="Aucun relevé AVANT charge")
-        self.etiquette_avant.pack(side="left", padx=12)
+        # -- Pied : etat du relevé avant + memorisation --------------- #
+        pied = ttk.Frame(cadre)
+        pied.grid(row=1, column=0, columnspan=3, sticky="ew", padx=8, pady=(0, 6))
+        self.etiquette_avant = ttk.Label(pied, text="Aucun relevé AVANT chargé")
+        self.etiquette_avant.pack(side="left")
+        ttk.Checkbutton(
+            pied,
+            text="Mémoriser les champs et mots de passe",
+            variable=self.var_memoriser_mdp,
+            command=self._enregistrer_preferences,
+        ).pack(side="right")
 
     def _construire_tableau(self):
         cadre = ttk.LabelFrame(self, text="Relevés SMART (RAW_VALUE)")
@@ -311,34 +329,38 @@ class Application(tk.Tk):
             "verdict",
         )
         entetes = {
-            "msa": ("MSA", 60),
-            "ip": ("Adresse IP", 120),
-            "partition": ("Partition", 90),
-            "av188": ("ID#188 avant", 110),
-            "ap188": ("ID#188 apres", 110),
-            "av199": ("ID#199 avant", 110),
-            "ap199": ("ID#199 apres", 110),
-            "verdict": ("Sanction", 340),
+            "msa": ("MSA", 52),
+            "ip": ("Adresse IP", 108),
+            "partition": ("Partition", 78),
+            "av188": ("188 avant", 84),
+            "ap188": ("188 après", 84),
+            "av199": ("199 avant", 84),
+            "ap199": ("199 après", 84),
+            "verdict": ("Sanction", 220),
         }
-        self.tableau = ttk.Treeview(cadre, columns=colonnes, show="headings", height=12)
+        self.tableau = ttk.Treeview(cadre, columns=colonnes, show="headings", height=9)
         for colonne in colonnes:
             titre, largeur = entetes[colonne]
             self.tableau.heading(colonne, text=titre)
-            self.tableau.column(colonne, width=largeur, anchor="w")
+            self.tableau.column(colonne, width=largeur, anchor="w", minwidth=40)
         self.tableau.tag_configure("ok", background="#e3f6e8")
         self.tableau.tag_configure("nok", background="#fbe0e0")
         self.tableau.tag_configure("attente", background="#fdf6dd")
         self.tableau.tag_configure("alerte", background="#fbe9c9")
 
-        barre = ttk.Scrollbar(cadre, orient="vertical", command=self.tableau.yview)
-        self.tableau.configure(yscrollcommand=barre.set)
+        barre_v = ttk.Scrollbar(cadre, orient="vertical", command=self.tableau.yview)
+        barre_h = ttk.Scrollbar(cadre, orient="horizontal", command=self.tableau.xview)
+        self.tableau.configure(
+            yscrollcommand=barre_v.set, xscrollcommand=barre_h.set
+        )
+        barre_v.pack(side="right", fill="y")
+        barre_h.pack(side="bottom", fill="x")
         self.tableau.pack(side="left", fill="both", expand=True)
-        barre.pack(side="right", fill="y")
 
     def _construire_journal(self):
         cadre = ttk.LabelFrame(self, text="Journal d'execution")
         cadre.pack(fill="both", expand=False, padx=10, pady=(0, 10))
-        self.journal = tk.Text(cadre, height=10, wrap="word", state="disabled")
+        self.journal = tk.Text(cadre, height=7, wrap="word", state="disabled")
         barre = ttk.Scrollbar(cadre, orient="vertical", command=self.journal.yview)
         self.journal.configure(yscrollcommand=barre.set)
         self.journal.pack(side="left", fill="both", expand=True)
@@ -346,17 +368,11 @@ class Application(tk.Tk):
 
         pied = ttk.Frame(self)
         pied.pack(fill="x", padx=10, pady=(0, 8))
-        self.etiquette_etat = ttk.Label(pied, text="Pret. Version %s" % __version__)
+        self.etiquette_etat = ttk.Label(pied, text="Prêt. Version %s" % __version__)
         self.etiquette_etat.pack(side="left")
 
-        ttk.Button(
-            pied,
-            text="Ouvrir le dossier des resultats",
-            command=self._ouvrir_dossier_resultats,
-        ).pack(side="right")
-
         dossier = rapport.dossier_resultats(self.racine)
-        chemin_affiche = ttk.Entry(pied, width=70)
+        chemin_affiche = ttk.Entry(pied, width=60)
         chemin_affiche.insert(0, dossier)
         chemin_affiche.configure(state="readonly")
         chemin_affiche.pack(side="right", padx=8)
@@ -404,40 +420,63 @@ class Application(tk.Tk):
     def _chemin_preferences(self):
         return os.path.join(self.racine, FICHIER_PREFS)
 
+    # Champs texte simples : nom de preference -> variable Tk.
+    def _champs_texte(self):
+        return {
+            "ip_switch": self.var_ip,
+            "login": self.var_login,
+            "operateur": self.var_operateur,
+            "serie_nvr": self.var_serie,
+            "capacite_minimale_ko": self.var_capacite_min,
+            "login_rest": self.var_login_rest,
+            "login_switch": self.var_login_switch,
+            "source_switch": self.var_source_switch,
+            "url_web": self.var_url_web,
+        }
+
+    # Champs mot de passe : enregistres seulement si l'operateur le demande,
+    # et encodes (base64) pour ne pas apparaitre en clair a l'ouverture du
+    # fichier. Ce n'est pas du chiffrement : voir l'avertissement du README.
+    def _champs_mot_de_passe(self):
+        return {
+            "mdp": self.var_mdp,
+            "mdp_root": self.var_mdp_root,
+            "mdp_rest": self.var_mdp_rest,
+            "mdp_switch": self.var_mdp_switch,
+        }
+
     def _charger_preferences(self):
         try:
             with open(self._chemin_preferences(), "r", encoding="utf-8") as fichier:
                 prefs = json.load(fichier)
         except (OSError, ValueError):
             return
-        self.var_ip.set(prefs.get("ip_switch", IP_PAR_DEFAUT))
+        for nom, variable in self._champs_texte().items():
+            if nom in prefs:
+                variable.set(prefs[nom])
         self.var_nombre.set(prefs.get("nombre_msa", 1))
-        self.var_login.set(prefs.get("login", ""))
         self.var_port.set(prefs.get("port", 22))
-        self.var_operateur.set(prefs.get("operateur", ""))
-        self.var_serie.set(prefs.get("serie_nvr", ""))
-        self.var_capacite_min.set(
-            prefs.get("capacite_minimale_ko", str(CAPACITE_MINIMALE))
-        )
-        self.var_login_rest.set(prefs.get("login_rest", LOGIN_REST))
-        self.var_login_switch.set(prefs.get("login_switch", ""))
-        self.var_source_switch.set(prefs.get("source_switch", SOURCE_SWITCH_WEB))
-        self.var_url_web.set(prefs.get("url_web", ""))
+
+        memoriser = prefs.get("memoriser_mdp", False)
+        self.var_memoriser_mdp.set(memoriser)
+        if memoriser:
+            for nom, variable in self._champs_mot_de_passe().items():
+                stocke = prefs.get(nom)
+                if stocke:
+                    variable.set(_decoder(stocke))
 
     def _enregistrer_preferences(self):
-        prefs = {
-            "ip_switch": self.var_ip.get(),
-            "nombre_msa": int(self.var_nombre.get()),
-            "login": self.var_login.get(),
-            "port": int(self.var_port.get()),
-            "operateur": self.var_operateur.get(),
-            "serie_nvr": self.var_serie.get(),
-            "capacite_minimale_ko": self.var_capacite_min.get(),
-            "login_rest": self.var_login_rest.get(),
-            "login_switch": self.var_login_switch.get(),
-            "source_switch": self.var_source_switch.get(),
-            "url_web": self.var_url_web.get(),
-        }
+        prefs = {nom: variable.get() for nom, variable in self._champs_texte().items()}
+        prefs["nombre_msa"] = int(self.var_nombre.get())
+        prefs["port"] = int(self.var_port.get())
+
+        memoriser = bool(self.var_memoriser_mdp.get())
+        prefs["memoriser_mdp"] = memoriser
+        if memoriser:
+            for nom, variable in self._champs_mot_de_passe().items():
+                valeur = variable.get()
+                if valeur:
+                    prefs[nom] = _encoder(valeur)
         try:
             with open(self._chemin_preferences(), "w", encoding="utf-8") as fichier:
                 json.dump(prefs, fichier, indent=2)
