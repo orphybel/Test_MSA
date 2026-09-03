@@ -35,25 +35,38 @@ def test_port_modifiable():
 # Lecture de la reponse
 # ---------------------------------------------------------------------- #
 REPONSE = (
-    '{"capacity": 3755205, "hdd_status_entries": ['
-    '{"index": 0, "device": "/dev/sda1", "state": "OK"},'
-    '{"index": 1, "device": "/dev/sdb1", "state": "OK"}]}'
+    '{"space_free": 3717093, "space_used": 38238, "capacity": 3755331,'
+    ' "mounted": true, "status_description": "Storage OK",'
+    ' "hdd_status_entries": ['
+    '{"device_id": 0, "name": "/dev/sda", "serial": "ZDZY9BEX"},'
+    '{"device_id": 0, "name": "/dev/sdb", "serial": "ZDZY9BE3"}]}'
 )
 
 
-def test_lecture_de_la_capacite():
+def test_c_est_l_espace_libre_qui_est_relevé():
+    """space_free, pas capacity (qui est l'espace total)."""
     releve = analyser_reponse(REPONSE)
-    assert releve["capacite_ko"] == 3755205
+    assert releve["capacite_ko"] == 3717093
+    assert releve["champ"] == "space_free"
+    assert releve["espace_total_ko"] == 3755331
+    assert releve["espace_utilise_ko"] == 38238
     assert len(releve["entrees"]) == 2
 
 
-def test_capacite_imbriquee():
-    """La capacite est retrouvee meme si elle n'est pas au premier niveau."""
-    assert analyser_reponse('{"storage": {"capacity": 42}}')["capacite_ko"] == 42
+def test_repli_sur_capacity_sans_space_free():
+    """Un module qui n'expose que capacity reste exploitable."""
+    releve = analyser_reponse('{"capacity": 3755331}')
+    assert releve["capacite_ko"] == 3755331
+    assert releve["champ"] == "capacity"
+
+
+def test_valeur_imbriquee():
+    releve = analyser_reponse('{"storage": {"space_free": 42}}')
+    assert releve["capacite_ko"] == 42
 
 
 def test_reponse_sans_entrees_disque():
-    assert analyser_reponse('{"capacity": 100}')["entrees"] == []
+    assert analyser_reponse('{"space_free": 100}')["entrees"] == []
 
 
 def test_reponse_non_json():
@@ -111,6 +124,12 @@ def test_sans_minimum_aucune_sanction():
 
 def test_capacite_absente():
     assert verdict(None, 3700000)[1] is False
+
+
+def test_espace_libre_de_la_procedure():
+    """L'exemple reel : space_free = 3 717 093 Ko, au-dessus du seuil."""
+    releve = analyser_reponse(REPONSE)
+    assert verdict(releve["capacite_ko"])[1] is True
 
 
 # ---------------------------------------------------------------------- #

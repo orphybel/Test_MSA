@@ -349,6 +349,7 @@ def exporter_stockage(campagne, racine=None):
         ecrire("RELEVE DE LA CAPACITE DE STOCKAGE\n")
         ecrire("Modules CPU enregistreur - procedure X301773\n")
         ecrire("Requete : GET http://<module>:8080/storage/status (compte REST)\n")
+        ecrire("Valeur relevée : espace libre (champ \"space_free\")\n")
         ecrire("=" * 90 + "\n\n")
         ecrire("Date            : %s\n" % campagne.get("date", ""))
         ecrire("N° de serie NVR : %s\n" % (campagne.get("serie_nvr") or "..."))
@@ -365,7 +366,10 @@ def exporter_stockage(campagne, racine=None):
             )
         ecrire("\n")
 
-        ecrire("%-8s %-16s %-34s %s\n" % ("MSA", "ADRESSE IP", "CAPACITE", "SANCTION"))
+        ecrire(
+            "%-8s %-16s %-34s %s\n"
+            % ("MSA", "ADRESSE IP", "ESPACE LIBRE", "SANCTION")
+        )
         ecrire("-" * 90 + "\n")
         for module in campagne.get("modules", []):
             ecrire(
@@ -379,6 +383,18 @@ def exporter_stockage(campagne, racine=None):
             )
             if module["conforme"] is False:
                 anomalies += 1
+            total = module.get("espace_total_ko")
+            utilise = module.get("espace_utilise_ko")
+            if total is not None or utilise is not None:
+                ecrire(
+                    "%-8s %-16s   (espace total : %s ; utilisé : %s)\n"
+                    % (
+                        "",
+                        "",
+                        formater_capacite(total),
+                        formater_capacite(utilise),
+                    )
+                )
 
         entrees = [m for m in campagne.get("modules", []) if m.get("entrees")]
         if entrees:

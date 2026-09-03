@@ -63,9 +63,12 @@ rejouée avec ce schéma. Les deux affichent la même fenêtre de connexion dans
 le navigateur, on ne peut donc pas les distinguer à l'œil. En cas de refus, le
 message d'erreur cite l'en-tête `WWW-Authenticate` renvoyé par le module.
 
-La valeur `capacity` de la réponse JSON est relevée et affichée en Ko, avec ses
-équivalents en Mo et Go (exemple de la procédure : `3 755 205 Ko`), ainsi que
-le détail des `hdd_status_entries` renvoyées. Le résultat est écrit dans
+La valeur relevée est l'**espace disque libre** — le champ `space_free` de la
+réponse JSON (Insomnia expose aussi `capacity`, qui est l'espace *total* =
+`space_free` + `space_used`). Elle est affichée en Ko, avec ses équivalents en
+Mo et Go, l'espace total et l'espace utilisé en rappel, ainsi que le détail des
+`hdd_status_entries` renvoyées. Si un module n'expose pas `space_free`,
+l'application retombe sur `capacity`. Le résultat est écrit dans
 `capacite_stockage_<n° de série>_<horodatage>.txt`, ouvert en fin de relevé.
 
 Le seuil d'acceptation est **capacité ≥ 3 700 000 Ko** : chaque module est

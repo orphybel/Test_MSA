@@ -470,6 +470,8 @@ def relever_stockage(msa, ip, config, journal):
         "msa": msa,
         "ip": ip,
         "capacite_ko": None,
+        "espace_total_ko": None,
+        "espace_utilise_ko": None,
         "entrees": [],
         "sanction": "",
         "conforme": None,
@@ -485,6 +487,8 @@ def relever_stockage(msa, ip, config, journal):
             config.get("mot_de_passe_rest", MOT_DE_PASSE_REST),
         )
         resultat["capacite_ko"] = releve["capacite_ko"]
+        resultat["espace_total_ko"] = releve.get("espace_total_ko")
+        resultat["espace_utilise_ko"] = releve.get("espace_utilise_ko")
         resultat["entrees"] = releve["entrees"]
         resultat["url"] = releve["url"]
         journal(

@@ -54,40 +54,57 @@ def formater_capacite(capacite_ko):
     )
 
 
-def _chercher_capacite(donnees):
-    """Retourne la valeur de "capacity", meme imbriquee dans la reponse."""
+# Champ de la reponse a relever : l'espace disque libre. Insomnia expose aussi
+# "capacity" (espace total = space_free + space_used) ; la procedure verifie
+# l'espace disponible, on relève donc "space_free" en priorite.
+CHAMP_CAPACITE = "space_free"
+CHAMPS_REPLI = ("capacity",)
+
+
+def _chercher_champ(donnees, cle_cherchee):
+    """Retourne la valeur numerique du champ, meme imbriquee dans la reponse."""
     if isinstance(donnees, dict):
         for cle, valeur in donnees.items():
-            if cle.lower() == "capacity" and isinstance(valeur, (int, float)):
+            if cle.lower() == cle_cherchee and isinstance(valeur, (int, float)):
                 return valeur
         for valeur in donnees.values():
-            trouvee = _chercher_capacite(valeur)
+            trouvee = _chercher_champ(valeur, cle_cherchee)
             if trouvee is not None:
                 return trouvee
     elif isinstance(donnees, list):
         for element in donnees:
-            trouvee = _chercher_capacite(element)
+            trouvee = _chercher_champ(element, cle_cherchee)
             if trouvee is not None:
                 return trouvee
     return None
 
 
 def analyser_reponse(texte):
-    """Extrait la capacite et les entrees disque de la reponse JSON."""
+    """Extrait l'espace libre et les entrees disque de la reponse JSON."""
     try:
         donnees = json.loads(texte)
     except ValueError:
         raise ErreurStockage(
             "La reponse du module n'est pas du JSON exploitable."
         )
-    capacite = _chercher_capacite(donnees)
+    capacite = _chercher_champ(donnees, CHAMP_CAPACITE)
+    champ_lu = CHAMP_CAPACITE
+    if capacite is None:
+        for repli in CHAMPS_REPLI:
+            capacite = _chercher_champ(donnees, repli)
+            if capacite is not None:
+                champ_lu = repli
+                break
     if capacite is None:
         raise ErreurStockage(
-            "La reponse ne contient pas de champ 'capacity'."
+            "La reponse ne contient ni 'space_free' ni 'capacity'."
         )
     entrees = donnees.get("hdd_status_entries") if isinstance(donnees, dict) else None
     return {
         "capacite_ko": capacite,
+        "champ": champ_lu,
+        "espace_total_ko": _chercher_champ(donnees, "capacity"),
+        "espace_utilise_ko": _chercher_champ(donnees, "space_used"),
         "entrees": entrees if isinstance(entrees, list) else [],
         "brut": donnees,
     }
