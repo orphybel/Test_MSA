@@ -1,0 +1,6 @@
+# Dependances de developpement et de test (non embarquees dans TestMSA.exe).
+-r requirements.txt
+pytest
+# Relecture des PV Excel produits dans les tests ; l'application n'en a pas
+# besoin, elle ecrit directement le XML des classeurs.
+openpyxl

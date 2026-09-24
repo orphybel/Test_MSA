@@ -257,7 +257,7 @@ l'exécution.
 ## Développement
 
 ```bash
-pip install -r requirements.txt pytest
+pip install -r requirements-dev.txt
 python -m pytest -q      # tests du parseur SMART et de la comparaison
 python main.py           # lancement de l'interface
 ```
