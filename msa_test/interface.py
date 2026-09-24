@@ -13,7 +13,7 @@ import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, rapport, rapport_html
+from . import __version__, pv_excel, rapport, rapport_html
 from .chemins import ouvrir_dans_l_explorateur, racine_application
 from .stockage import CAPACITE_MINIMALE, LOGIN_REST, MOT_DE_PASSE_REST
 from .smart_parser import valeur_est_nulle
@@ -36,6 +36,8 @@ from .campagne import (
 
 FICHIER_PREFS = "preferences_msa.json"
 IP_PAR_DEFAUT = "192.168.0.186"
+TYPE_PV_MP14 = "mp14"
+TYPE_PV_RERNG = "rerng"
 
 
 def _encoder(texte):
@@ -54,7 +56,7 @@ class Application(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Test MSA - Procedure X301773 (etapes 12 a 15 et 24)")
-        self.geometry("900x800")
+        self.geometry("900x900")
         self.minsize(760, 680)
 
         self.racine = racine_application()
@@ -67,20 +69,24 @@ class Application(tk.Tk):
 
         self._construire_saisie()
         self._construire_actions()
-        self._construire_tableau()
         self._construire_journal()
+        self._construire_tableau()
 
         self._charger_preferences()
         self._charger_avant_existant()
         self.protocol("WM_DELETE_WINDOW", self._fermer)
-        self.after(100, self._pomper_journal)
+        self._id_pompe = self.after(100, self._pomper_journal)
 
     # ------------------------------------------------------------------ #
     # Construction de l'interface
     # ------------------------------------------------------------------ #
     def _construire_saisie(self):
-        cadre = ttk.LabelFrame(self, text="Parametres du banc de test")
-        cadre.pack(fill="x", padx=10, pady=(10, 6))
+        # Parametres ranges en onglets : la fenetre reste compacte en hauteur,
+        # les actions et les resultats restant toujours visibles en dessous.
+        self.onglets = ttk.Notebook(self)
+        self.onglets.pack(fill="x", padx=10, pady=(10, 6))
+        cadre = ttk.Frame(self.onglets, padding=(4, 6))
+        self.onglets.add(cadre, text="  Banc de test  ")
 
         self.var_ip = tk.StringVar(value=IP_PAR_DEFAUT)
         self.var_nombre = tk.IntVar(value=1)
@@ -143,24 +149,142 @@ class Application(tk.Tk):
 
         paire("Capacité mini (Ko)", self.var_capacite_min, 0, 8, largeur=14)
 
+        # N° de chaque MSA teste : repris dans la fiche de test Excel (F12).
+        cadre_numeros = ttk.LabelFrame(cadre, text="N° des MSA testés (PV Excel)")
+        cadre_numeros.grid(
+            row=10, column=0, columnspan=4, sticky="ew", padx=8, pady=(4, 2)
+        )
+        self.vars_numeros = []
+        self.champs_numeros = []
+        for rang in range(NB_MSA_MAX):
+            variable = tk.StringVar()
+            ligne, colonne = divmod(rang, 3)
+            ttk.Label(cadre_numeros, text="MSA%d" % rang).grid(
+                row=ligne, column=colonne * 2, sticky="w", padx=(8, 4), pady=3
+            )
+            champ = ttk.Entry(cadre_numeros, textvariable=variable, width=16)
+            champ.grid(row=ligne, column=colonne * 2 + 1, sticky="w", pady=3)
+            self.vars_numeros.append(variable)
+            self.champs_numeros.append(champ)
+
         self.etiquette_apercu = ttk.Label(
             cadre, text="", foreground="#00693e", wraplength=560, justify="left"
         )
         self.etiquette_apercu.grid(
-            row=9, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 8)
+            row=9, column=0, columnspan=4, sticky="w", padx=8, pady=(6, 2)
         )
 
         self._construire_carte_switch()
+        self._construire_pv()
         self.var_ip.trace_add("write", lambda *_: self._rafraichir_apercu())
         self.var_nombre.trace_add("write", lambda *_: self._rafraichir_apercu())
         self._rafraichir_apercu()
 
+    def _construire_pv(self):
+        """Fiches de test Excel et dossier d'enregistrement des fichiers."""
+        cadre = ttk.Frame(self.onglets, padding=(4, 6))
+        self.onglets.add(cadre, text="  PV Excel et dossier  ")
+        cadre.grid_columnconfigure(1, weight=1)
+
+        self.var_type_pv = tk.StringVar(value=TYPE_PV_MP14)
+        self.var_modele_mp14 = tk.StringVar()
+        self.var_modele_rerng = tk.StringVar()
+        self.var_dossier = tk.StringVar()
+
+        ttk.Label(cadre, text="Type de PV :").grid(
+            row=0, column=0, sticky="w", padx=8, pady=6
+        )
+        choix = ttk.Frame(cadre)
+        choix.grid(row=0, column=1, columnspan=2, sticky="w")
+        for valeur, libelle in (
+            (TYPE_PV_MP14, "MP14 (MP14-NVR-DISQ)"),
+            (TYPE_PV_RERNG, "RERNG (RERNG-NVR-2-DISQ)"),
+        ):
+            ttk.Radiobutton(
+                choix, text=libelle, value=valeur, variable=self.var_type_pv
+            ).pack(side="left", padx=(0, 16))
+
+        def chemin(ligne, libelle, variable, commande):
+            ttk.Label(cadre, text=libelle).grid(
+                row=ligne, column=0, sticky="w", padx=8, pady=4
+            )
+            ttk.Entry(cadre, textvariable=variable, width=52).grid(
+                row=ligne, column=1, sticky="ew", pady=4
+            )
+            ttk.Button(cadre, text="Parcourir...", command=commande).grid(
+                row=ligne, column=2, sticky="w", padx=8
+            )
+
+        chemin(
+            1, "Modèle PV MP14", self.var_modele_mp14,
+            lambda: self._choisir_modele(self.var_modele_mp14),
+        )
+        chemin(
+            2, "Modèle PV RERNG", self.var_modele_rerng,
+            lambda: self._choisir_modele(self.var_modele_rerng),
+        )
+        chemin(3, "Dossier d'enregistrement", self.var_dossier, self._choisir_dossier)
+
+        ttk.Label(
+            cadre,
+            text="PV Excel, rapports, relevés et fichiers texte sont enregistrés "
+            "dans ce dossier (vide = resultats_msa à côté du logiciel). Un PV est "
+            "produit par MSA numéroté, à la fin du relevé APRÈS.",
+            foreground="#777777",
+            wraplength=640,
+            justify="left",
+        ).grid(row=4, column=0, columnspan=3, sticky="w", padx=8, pady=(2, 4))
+
+        self.var_dossier.trace_add("write", lambda *_: self._appliquer_dossier())
+
+    def _choisir_modele(self, variable):
+        chemin = filedialog.askopenfilename(
+            title="Choisir le modèle de fiche de test",
+            filetypes=[
+                ("Classeur Excel avec macros", "*.xlsm"),
+                ("Classeur Excel", "*.xlsx"),
+                ("Tous les fichiers", "*.*"),
+            ],
+        )
+        if chemin:
+            variable.set(chemin)
+            self._enregistrer_preferences()
+
+    def _choisir_dossier(self):
+        chemin = filedialog.askdirectory(
+            title="Choisir le dossier d'enregistrement",
+            initialdir=self.var_dossier.get() or rapport.dossier_resultats(self.racine),
+        )
+        if chemin:
+            self.var_dossier.set(chemin)
+            self._enregistrer_preferences()
+
+    def _appliquer_dossier(self):
+        """Redirige tous les fichiers produits vers le dossier choisi."""
+        rapport.choisir_dossier(self.var_dossier.get().strip() or None)
+        if hasattr(self, "chemin_affiche"):
+            self.chemin_affiche.configure(state="normal")
+            self.chemin_affiche.delete(0, "end")
+            self.chemin_affiche.insert(0, rapport.dossier_resultats(self.racine))
+            self.chemin_affiche.configure(state="readonly")
+
+    def _modele_pv(self):
+        if self.var_type_pv.get() == TYPE_PV_RERNG:
+            return self.var_modele_rerng.get().strip()
+        return self.var_modele_mp14.get().strip()
+
+    def _numeros_msa(self):
+        return {rang: variable.get().strip() for rang, variable in enumerate(self.vars_numeros)}
+
     def _construire_carte_switch(self):
         """Identifiants de la carte control switch, pour le relevé des MAC."""
-        cadre = ttk.LabelFrame(
-            self, text="Carte Controle/Switch (relevé des adresses MAC uniquement)"
-        )
-        cadre.pack(fill="x", padx=10, pady=(0, 6))
+        cadre = ttk.Frame(self.onglets, padding=(4, 6))
+        self.onglets.add(cadre, text="  Carte Contrôle/Switch  ")
+        ttk.Label(
+            cadre,
+            text="Utilisé uniquement pour le relevé des adresses MAC.",
+            foreground="#777777",
+        ).grid(row=4, column=0, columnspan=4, sticky="w", padx=8, pady=(0, 4))
 
         ttk.Label(cadre, text="Source :").grid(row=0, column=0, sticky="w", padx=8, pady=6)
         for colonne, (valeur, libelle) in enumerate(
@@ -287,19 +411,27 @@ class Application(tk.Tk):
             0,
             state="disabled",
         )
+        self.bouton_pv = bouton(
+            fichiers,
+            "Générer les PV Excel",
+            self._generer_pv_excel,
+            0,
+            1,
+            state="disabled",
+        )
         bouton(
             fichiers,
             "Charger un relevé AVANT...",
             self._charger_avant_fichier,
             0,
-            1,
+            2,
         )
         bouton(
             fichiers,
             "Ouvrir le dossier des résultats",
             self._ouvrir_dossier_resultats,
             0,
-            2,
+            3,
         )
 
         # -- Pied : etat du relevé avant + memorisation --------------- #
@@ -338,7 +470,7 @@ class Application(tk.Tk):
             "ap199": ("199 après", 84),
             "verdict": ("Sanction", 220),
         }
-        self.tableau = ttk.Treeview(cadre, columns=colonnes, show="headings", height=9)
+        self.tableau = ttk.Treeview(cadre, columns=colonnes, show="headings", height=6)
         for colonne in colonnes:
             titre, largeur = entetes[colonne]
             self.tableau.heading(colonne, text=titre)
@@ -358,24 +490,28 @@ class Application(tk.Tk):
         self.tableau.pack(side="left", fill="both", expand=True)
 
     def _construire_journal(self):
+        # Pied et journal sont ancres en bas AVANT le tableau : quand la
+        # fenetre manque de hauteur, c'est le tableau (qui defile) qui se
+        # reduit, jamais le journal ni l'emplacement des fichiers.
+        pied = ttk.Frame(self)
+        pied.pack(side="bottom", fill="x", padx=10, pady=(0, 8))
+
         cadre = ttk.LabelFrame(self, text="Journal d'execution")
-        cadre.pack(fill="both", expand=False, padx=10, pady=(0, 10))
-        self.journal = tk.Text(cadre, height=7, wrap="word", state="disabled")
+        cadre.pack(side="bottom", fill="x", padx=10, pady=(0, 6))
+        self.journal = tk.Text(cadre, height=6, wrap="word", state="disabled")
         barre = ttk.Scrollbar(cadre, orient="vertical", command=self.journal.yview)
         self.journal.configure(yscrollcommand=barre.set)
         self.journal.pack(side="left", fill="both", expand=True)
         barre.pack(side="right", fill="y")
 
-        pied = ttk.Frame(self)
-        pied.pack(fill="x", padx=10, pady=(0, 8))
         self.etiquette_etat = ttk.Label(pied, text="Prêt. Version %s" % __version__)
         self.etiquette_etat.pack(side="left")
 
         dossier = rapport.dossier_resultats(self.racine)
-        chemin_affiche = ttk.Entry(pied, width=60)
-        chemin_affiche.insert(0, dossier)
-        chemin_affiche.configure(state="readonly")
-        chemin_affiche.pack(side="right", padx=8)
+        self.chemin_affiche = ttk.Entry(pied, width=60)
+        self.chemin_affiche.insert(0, dossier)
+        self.chemin_affiche.configure(state="readonly")
+        self.chemin_affiche.pack(side="right", padx=8)
         ttk.Label(pied, text="Fichiers produits dans :").pack(side="right")
 
     # ------------------------------------------------------------------ #
@@ -394,9 +530,15 @@ class Application(tk.Tk):
             self.journal.insert("end", message + "\n")
             self.journal.see("end")
             self.journal.configure(state="disabled")
-        self.after(100, self._pomper_journal)
+        self._id_pompe = self.after(100, self._pomper_journal)
 
     def _rafraichir_apercu(self):
+        try:
+            nombre = int(self.var_nombre.get())
+        except (ValueError, tk.TclError):
+            nombre = 0
+        for rang, champ in enumerate(getattr(self, "champs_numeros", [])):
+            champ.configure(state="normal" if rang < nombre else "disabled")
         try:
             ips = liste_ip(self.var_ip.get(), int(self.var_nombre.get()))
         except (ValueError, tk.TclError):
@@ -432,6 +574,10 @@ class Application(tk.Tk):
             "login_switch": self.var_login_switch,
             "source_switch": self.var_source_switch,
             "url_web": self.var_url_web,
+            "type_pv": self.var_type_pv,
+            "modele_pv_mp14": self.var_modele_mp14,
+            "modele_pv_rerng": self.var_modele_rerng,
+            "dossier_enregistrement": self.var_dossier,
         }
 
     # Champs mot de passe : enregistres seulement si l'operateur le demande,
@@ -456,6 +602,9 @@ class Application(tk.Tk):
                 variable.set(prefs[nom])
         self.var_nombre.set(prefs.get("nombre_msa", 1))
         self.var_port.set(prefs.get("port", 22))
+        for rang, numero in enumerate(prefs.get("numeros_msa", [])[: NB_MSA_MAX]):
+            self.vars_numeros[rang].set(numero)
+        self._rafraichir_apercu()
 
         memoriser = prefs.get("memoriser_mdp", False)
         self.var_memoriser_mdp.set(memoriser)
@@ -467,8 +616,12 @@ class Application(tk.Tk):
 
     def _enregistrer_preferences(self):
         prefs = {nom: variable.get() for nom, variable in self._champs_texte().items()}
-        prefs["nombre_msa"] = int(self.var_nombre.get())
-        prefs["port"] = int(self.var_port.get())
+        try:
+            prefs["nombre_msa"] = int(self.var_nombre.get())
+            prefs["port"] = int(self.var_port.get())
+        except (ValueError, tk.TclError):
+            prefs["nombre_msa"], prefs["port"] = 1, 22
+        prefs["numeros_msa"] = [variable.get() for variable in self.vars_numeros]
 
         memoriser = bool(self.var_memoriser_mdp.get())
         prefs["memoriser_mdp"] = memoriser
@@ -963,6 +1116,14 @@ class Application(tk.Tk):
         chemin, _ = rapport.exporter_pv(campagne_apres, self.campagne_avant, self.racine)
         self._tracer("PV de comparaison : %s" % chemin)
         self._generer_rapport(self.campagne_avant, campagne_apres)
+        self.bouton_pv.configure(state="normal")
+        if self._modele_pv():
+            self._generer_pv_excel(silencieux=True)
+        else:
+            self._tracer(
+                "PV Excel non generes : aucun modele choisi (onglet « PV Excel "
+                "et dossier »)."
+            )
         rappel = (
             "\n\nATTENTION : %d RAW_VALUE non nulle(s) relevée(s) - voir le rapport."
             % len(alertes)
@@ -988,6 +1149,60 @@ class Application(tk.Tk):
                 "Au moins une valeur a evolué ou un module n'a pas pu etre relevé.\n\n"
                 "PV genere :\n%s" % chemin,
             )
+
+    def _generer_pv_excel(self, silencieux=False):
+        """Produit une fiche de test Excel par MSA numeroté (etape 24)."""
+        if self.campagne_apres is None:
+            messagebox.showinfo(
+                "PV Excel",
+                "Les PV reprennent les valeurs ID#199 relevées APRÈS "
+                "enregistrement : lancez d'abord le relevé APRÈS (étape 24).",
+            )
+            return
+        modele = self._modele_pv()
+        if not modele or not os.path.isfile(modele):
+            messagebox.showerror(
+                "PV Excel",
+                "Choisissez le modèle de PV %s dans l'onglet « PV Excel et "
+                "dossier »." % ("RERNG" if self.var_type_pv.get() == TYPE_PV_RERNG else "MP14"),
+            )
+            return
+        numeros = self._numeros_msa()
+        if not any(numeros.get(m["msa"]) for m in self.campagne_apres.get("modules", [])):
+            messagebox.showerror(
+                "PV Excel",
+                "Renseignez le N° de chaque MSA testé (onglet « Banc de test »).",
+            )
+            return
+
+        self._enregistrer_preferences()
+        dossier = rapport.dossier_resultats(self.racine)
+        produits, anomalies = pv_excel.generer_pvs(
+            modele,
+            dossier,
+            numeros,
+            self.campagne_avant,
+            self.campagne_apres,
+            self.var_operateur.get().strip(),
+            journal=self._tracer,
+        )
+        for anomalie in anomalies:
+            self._tracer("PV Excel : %s" % anomalie)
+
+        message = "%d PV Excel généré(s) dans :\n%s" % (len(produits), dossier)
+        if anomalies:
+            message += "\n\nÀ vérifier :\n- " + "\n- ".join(anomalies)
+            messagebox.showwarning("PV Excel", message)
+        elif not silencieux:
+            messagebox.showinfo("PV Excel", message)
+
+    def destroy(self):
+        # Annule la lecture periodique du journal avant de detruire la fenetre.
+        try:
+            self.after_cancel(self._id_pompe)
+        except (AttributeError, ValueError, tk.TclError):
+            pass
+        super().destroy()
 
     def _fermer(self):
         if self.travail is not None and self.travail.is_alive():

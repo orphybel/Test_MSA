@@ -19,11 +19,27 @@ from .campagne import (
 
 DOSSIER_RESULTATS = "resultats_msa"
 
+# Dossier choisi par l'operateur pour enregistrer PV et rapports. Vide : le
+# sous-dossier resultats_msa situe a cote de l'executable.
+_dossier_choisi = None
+
+
+def choisir_dossier(chemin):
+    """Impose le dossier d'enregistrement de tous les fichiers produits."""
+    global _dossier_choisi
+    _dossier_choisi = chemin or None
+
 
 def dossier_resultats(racine=None):
-    """Dossier de travail, cree au besoin, a cote de l'executable."""
-    racine = racine or os.getcwd()
-    chemin = os.path.join(racine, DOSSIER_RESULTATS)
+    """Dossier de travail, cree au besoin.
+
+    Le dossier choisi par l'operateur l'emporte ; a defaut, le sous-dossier
+    resultats_msa a cote de l'executable.
+    """
+    if _dossier_choisi:
+        chemin = _dossier_choisi
+    else:
+        chemin = os.path.join(racine or os.getcwd(), DOSSIER_RESULTATS)
     os.makedirs(chemin, exist_ok=True)
     return chemin
 

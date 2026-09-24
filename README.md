@@ -46,6 +46,50 @@ restent à la charge de l'opérateur.
 Le bouton **Ouvrir le rapport visuel** réaffiche à tout moment le dernier
 rapport généré.
 
+## PV Excel (fiche de test)
+
+À la fin du relevé **APRÈS** (étape 24), l'application produit **une fiche de
+test Excel par MSA**, à partir du modèle choisi dans l'onglet **« PV Excel et
+dossier »** (un modèle MP14 et un modèle RERNG, choix par bouton radio). Le
+bouton **Générer les PV Excel** permet de les reproduire à tout moment.
+
+Le **N° de chaque MSA testé** se saisit dans l'onglet **« Banc de test »**
+(cadre « N° des MSA testés », un champ par module actif). Cellules renseignées :
+
+| Feuille | Cellule | Contenu |
+|---|---|---|
+| Constit produit | F12 | N° du MSA |
+| Constit produit | B23 | date du jour |
+| Constit produit | B24 | opérateur |
+| Test final (1_1) | C20 | RAW_VALUE ID#199 du disque 1 (`/dev/sda1`), relevé après |
+| Test final (1_1) | C21 | RAW_VALUE ID#199 du disque 2 (`/dev/sdb1`), relevé après |
+| Test final (1_1) | D20 / D21 | `PASS` si identique au relevé avant, `FAIL` sinon |
+
+Le nom du fichier reprend celui du modèle en y remplaçant l'ancien numéro de
+MSA (`…_Fiche-de-Test-SAV_0051137_0006.xlsm` → `…_Fiche-de-Test-SAV_<n°>.xlsm`).
+
+Les modèles sont des classeurs `.xlsm` avec macros, plus d'une centaine de
+contrôles ActiveX, des feuilles cachées et de la mise en forme conditionnelle,
+qu'une bibliothèque comme openpyxl détruirait en réenregistrant. L'application
+modifie donc **directement le XML des seules cellules ci-dessus** et recopie
+tout le reste du classeur octet pour octet. Le n° du MSA étant repris par
+formule dans l'en-tête de chaque feuille, ces en-têtes sont actualisés et Excel
+recalcule le classeur à l'ouverture.
+
+Un module sans numéro, ou non relevé après enregistrement, est signalé et n'a
+pas de PV ; un disque en `FAIL` est également signalé.
+
+## Dossier d'enregistrement
+
+Le champ **Dossier d'enregistrement** (onglet « PV Excel et dossier ») fixe où
+sont écrits **tous** les fichiers produits : PV Excel, rapports HTML, relevés
+JSON/CSV et fichiers texte. Vide, c'est le sous-dossier `resultats_msa` à côté
+du logiciel. Le chemin effectif est affiché en bas de la fenêtre.
+
+> Le relevé « avant » est recherché dans ce même dossier au démarrage : si vous
+> changez de dossier entre le relevé avant et le relevé après, rechargez-le avec
+> **Charger un relevé AVANT…**.
+
 ## Capacité de stockage
 
 Le bouton **Capacité de stockage** envoie à chaque module CPU enregistreur la
@@ -227,6 +271,7 @@ Organisation du code :
   détection des valeurs non nulles ;
 - `msa_test/web_mac.py` — relevé des adresses MAC via l'interface web du NVR ;
 - `msa_test/stockage.py` — requête `:8080/storage/status` et capacité relevée ;
+- `msa_test/pv_excel.py` — remplissage des fiches de test Excel (édition XML ciblée) ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
 - `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.
