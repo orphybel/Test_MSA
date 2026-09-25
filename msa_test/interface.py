@@ -13,7 +13,7 @@ import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, pv_excel, rapport, rapport_html
+from . import __version__, pdf_excel, pv_excel, rapport, rapport_html
 from .chemins import ouvrir_dans_l_explorateur, racine_application
 from .stockage import CAPACITE_MINIMALE, LOGIN_REST, MOT_DE_PASSE_REST
 from .smart_parser import valeur_est_nulle
@@ -1113,8 +1113,19 @@ class Application(tk.Tk):
                 ),
                 tags=(tag,),
             )
-        chemin, _ = rapport.exporter_pv(campagne_apres, self.campagne_avant, self.racine)
-        self._tracer("PV de comparaison : %s" % chemin)
+        comparaisons = rapport.exporter_comparaisons(
+            campagne_apres, self.campagne_avant, self._numeros_msa(), self.racine
+        )
+        for chemin_msa, conforme_msa in comparaisons:
+            self._tracer(
+                "Comparaison %s : %s"
+                % ("CONFORME" if conforme_msa else "NON CONFORME", chemin_msa)
+            )
+        dossier = rapport.dossier_resultats(self.racine)
+        chemin = "%d rapport(s) de comparaison par MSA dans :\n%s" % (
+            len(comparaisons),
+            dossier,
+        )
         self._generer_rapport(self.campagne_avant, campagne_apres)
         self.bouton_pv.configure(state="normal")
         if self._modele_pv():
@@ -1138,7 +1149,7 @@ class Application(tk.Tk):
             messagebox.showinfo(
                 "Etape 24 - CONFORME",
                 "Les RAW_VALUE ID#188 et ID#199 sont identiques a celles relevées "
-                "avant enregistrement.%s\n\nPV genere :\n%s" % (rappel, chemin),
+                "avant enregistrement.%s\n\n%s" % (rappel, chemin),
             )
         else:
             self.etiquette_etat.configure(
@@ -1147,7 +1158,7 @@ class Application(tk.Tk):
             messagebox.showwarning(
                 "Etape 24 - NON CONFORME",
                 "Au moins une valeur a evolué ou un module n'a pas pu etre relevé.\n\n"
-                "PV genere :\n%s" % chemin,
+                "%s" % chemin,
             )
 
     def _generer_pv_excel(self, silencieux=False):
@@ -1177,19 +1188,54 @@ class Application(tk.Tk):
 
         self._enregistrer_preferences()
         dossier = rapport.dossier_resultats(self.racine)
-        produits, anomalies = pv_excel.generer_pvs(
+        arguments = (
             modele,
             dossier,
             numeros,
             self.campagne_avant,
             self.campagne_apres,
             self.var_operateur.get().strip(),
-            journal=self._tracer,
+            silencieux,
         )
-        for anomalie in anomalies:
-            self._tracer("PV Excel : %s" % anomalie)
+        # L'export PDF pilote Excel et prend quelques secondes par fiche : il
+        # tourne en arriere-plan pour ne pas figer la fenetre.
+        self.bouton_pv.configure(state="disabled")
+        self.etiquette_etat.configure(text="Génération des PV Excel et PDF...")
+        threading.Thread(
+            target=self._executer_pv_excel, args=arguments, daemon=True
+        ).start()
 
-        message = "%d PV Excel généré(s) dans :\n%s" % (len(produits), dossier)
+    def _executer_pv_excel(self, modele, dossier, numeros, avant, apres, operateur,
+                           silencieux):
+        try:
+            classeurs, anomalies = pv_excel.generer_pvs(
+                modele, dossier, numeros, avant, apres, operateur, journal=self._tracer
+            )
+            pdfs, anomalies_pdf = pdf_excel.exporter_pdfs(classeurs, journal=self._tracer)
+        except Exception as err:  # garde-fou : l'erreur remonte a l'operateur
+            classeurs, pdfs, anomalies, anomalies_pdf = [], [], ["%s" % err], []
+        self.after(
+            0,
+            self._terminer_pv_excel,
+            dossier,
+            classeurs,
+            pdfs,
+            anomalies + anomalies_pdf,
+            silencieux,
+        )
+
+    def _terminer_pv_excel(self, dossier, classeurs, pdfs, anomalies, silencieux):
+        self.bouton_pv.configure(state="normal")
+        for anomalie in anomalies:
+            self._tracer("PV : %s" % anomalie)
+        self.etiquette_etat.configure(
+            text="%d PV Excel et %d PDF générés." % (len(classeurs), len(pdfs))
+        )
+        message = "%d PV Excel et %d PDF générés dans :\n%s" % (
+            len(classeurs),
+            len(pdfs),
+            dossier,
+        )
         if anomalies:
             message += "\n\nÀ vérifier :\n- " + "\n- ".join(anomalies)
             messagebox.showwarning("PV Excel", message)

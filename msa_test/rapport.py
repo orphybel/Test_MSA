@@ -171,69 +171,105 @@ def exporter_csv(campagne, racine=None):
     return chemin
 
 
-def exporter_pv(campagne_apres, campagne_avant, racine=None):
-    """Synthese texte reprenant la mise en forme du PV de test (etape 24)."""
-    lignes_comparaison, conforme = comparer(campagne_avant, campagne_apres)
-    nom = "PV_comparaison%s_%s.txt" % (
-        fragment_nom(campagne_apres.get("serie_nvr")),
-        _horodatage(campagne_apres),
-    )
-    chemin = os.path.join(dossier_resultats(racine), nom)
+def exporter_comparaisons(campagne_apres, campagne_avant, numeros=None, racine=None):
+    """Ecrit un rapport de comparaison avant / apres par module MSA (etape 24).
 
-    with open(chemin, "w", encoding="utf-8") as fichier:
-        ecrire = fichier.write
-        ecrire("PV DE TEST - Procedure X301773 (RERNG-NVR-2-DISQ / MP14-NVR-DISQ)\n")
-        ecrire("Verification SMART avant / apres enregistrement (etapes 12 a 15 et 24)\n")
-        ecrire("=" * 78 + "\n\n")
-        ecrire("Date            : %s\n" % campagne_apres.get("date", ""))
-        ecrire("Operateur       : %s\n" % (campagne_apres.get("operateur") or "..."))
-        ecrire("N° de serie NVR : %s\n" % (campagne_apres.get("serie_nvr") or "..."))
-        ecrire("Relevé avant    : %s\n" % campagne_avant.get("date", ""))
-        ecrire("Nombre de MSA   : %s\n\n" % campagne_apres.get("nombre_msa", ""))
+    `numeros` associe le rang du module (0 pour MSA0...) a son numero de
+    serie, repris dans le nom et l'en-tete du fichier. Retourne la liste des
+    (chemin, conforme) dans l'ordre des modules.
+    """
+    numeros = numeros or {}
+    lignes_comparaison, _ = comparer(campagne_avant, campagne_apres)
+    alertes = alertes_avant_apres(campagne_avant, campagne_apres)
+    dossier = dossier_resultats(racine)
 
-        for ligne in lignes_comparaison:
-            ecrire("-" * 78 + "\n")
-            ecrire("MSA%d (%s) - %s\n" % (ligne["msa"], ligne["ip"], ligne["partition"]))
-            ecrire(
-                "  ID#188 Command_Timeout      : avant=%s   apres=%s\n"
-                % (_valeur(ligne["avant_188"]), _valeur(ligne["apres_188"]))
-            )
-            ecrire(
-                "  ID#199 UDMA_CRC_Error_Count : avant=%s   apres=%s\n"
-                % (_valeur(ligne["avant_199"]), _valeur(ligne["apres_199"]))
-            )
-            ecrire("  Sanction : %s\n" % ligne["verdict"])
-
-        alertes = alertes_avant_apres(campagne_avant, campagne_apres)
-        if alertes:
-            ecrire("\n" + "=" * 78 + "\n")
-            ecrire("ATTENTION - RAW_VALUE non nulles (erreurs deja comptabilisees\n")
-            ecrire("par le disque). La procedure ne sanctionne que l'egalite des\n")
-            ecrire("valeurs avant/apres, mais ces relevés sont a examiner :\n\n")
-            for alerte in alertes:
-                ecrire(
-                    "  MSA%d (%s) %s : ID#%d %s = %s\n"
-                    % (
-                        alerte["msa"],
-                        alerte["ip"],
-                        alerte["partition"],
-                        alerte["attribut_id"],
-                        alerte["attribut"],
-                        alerte["valeur"],
-                    )
-                )
-
-        ecrire("\n" + "=" * 78 + "\n")
-        ecrire(
-            "CONCLUSION : %s\n"
-            % ("CONFORME" if conforme else "NON CONFORME - voir les ecarts ci-dessus")
+    produits = []
+    for module in campagne_apres.get("modules", []):
+        rang = module["msa"]
+        numero = (numeros.get(rang) or "").strip()
+        lignes = [l for l in lignes_comparaison if l["msa"] == rang]
+        alertes_module = [a for a in alertes if a["msa"] == rang]
+        conforme = bool(lignes) and all(
+            l["verdict"].startswith("CONFORME") for l in lignes
         )
-        if alertes and conforme:
-            ecrire(
-                "             (valeurs inchangees, mais %d RAW_VALUE non nulle(s) "
-                "signalee(s) ci-dessus)\n" % len(alertes)
+
+        nom = "comparaison_MSA%d%s_%s.txt" % (
+            rang,
+            fragment_nom(numero),
+            _horodatage(campagne_apres),
+        )
+        chemin = os.path.join(dossier, nom)
+        with open(chemin, "w", encoding="utf-8") as fichier:
+            _ecrire_comparaison(
+                fichier.write,
+                campagne_apres,
+                campagne_avant,
+                module,
+                numero,
+                lignes,
+                alertes_module,
+                conforme,
             )
-    return chemin, conforme
+        produits.append((chemin, conforme))
+    return produits
+
+
+def _ecrire_comparaison(ecrire, campagne_apres, campagne_avant, module, numero,
+                        lignes, alertes, conforme):
+    ecrire("RAPPORT DE COMPARAISON SMART - MSA%d\n" % module["msa"])
+    ecrire("Procedure X301773 (RERNG-NVR-2-DISQ / MP14-NVR-DISQ)\n")
+    ecrire("Verification avant / apres enregistrement (etapes 12 a 15 et 24)\n")
+    ecrire("=" * 78 + "\n\n")
+    ecrire("N° du MSA       : %s\n" % (numero or "non renseigné"))
+    ecrire("Emplacement     : MSA%d - %s\n" % (module["msa"], module.get("ip", "")))
+    ecrire("N° de serie NVR : %s\n" % (campagne_apres.get("serie_nvr") or "..."))
+    ecrire("Operateur       : %s\n" % (campagne_apres.get("operateur") or "..."))
+    ecrire("Relevé avant    : %s\n" % (campagne_avant or {}).get("date", ""))
+    ecrire("Relevé apres    : %s\n\n" % campagne_apres.get("date", ""))
+
+    for ligne in lignes:
+        disque = "disque 1" if ligne["partition"] == "/dev/sda1" else "disque 2"
+        ecrire("-" * 78 + "\n")
+        ecrire("%s (%s)\n" % (ligne["partition"], disque))
+        ecrire(
+            "  ID#188 Command_Timeout      : avant=%s   apres=%s\n"
+            % (_valeur(ligne["avant_188"]), _valeur(ligne["apres_188"]))
+        )
+        ecrire(
+            "  ID#199 UDMA_CRC_Error_Count : avant=%s   apres=%s\n"
+            % (_valeur(ligne["avant_199"]), _valeur(ligne["apres_199"]))
+        )
+        ecrire("  Sanction : %s\n" % ligne["verdict"])
+
+    if alertes:
+        ecrire("\n" + "=" * 78 + "\n")
+        ecrire("ATTENTION - RAW_VALUE non nulles (erreurs deja comptabilisees\n")
+        ecrire("par le disque). La procedure ne sanctionne que l'egalite des\n")
+        ecrire("valeurs avant/apres, mais ces relevés sont a examiner :\n\n")
+        for alerte in alertes:
+            ecrire(
+                "  %s : ID#%d %s = %s\n"
+                % (
+                    alerte["partition"],
+                    alerte["attribut_id"],
+                    alerte["attribut"],
+                    alerte["valeur"],
+                )
+            )
+
+    ecrire("\n" + "=" * 78 + "\n")
+    ecrire(
+        "CONCLUSION MSA%d : %s\n"
+        % (
+            module["msa"],
+            "CONFORME" if conforme else "NON CONFORME - voir les ecarts ci-dessus",
+        )
+    )
+    if alertes and conforme:
+        ecrire(
+            "             (valeurs inchangees, mais %d RAW_VALUE non nulle(s) "
+            "signalee(s) ci-dessus)\n" % len(alertes)
+        )
 
 
 def _cle_ip(equipement):

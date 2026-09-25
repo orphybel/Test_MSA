@@ -79,6 +79,25 @@ recalcule le classeur à l'ouverture.
 Un module sans numéro, ou non relevé après enregistrement, est signalé et n'a
 pas de PV ; un disque en `FAIL` est également signalé.
 
+### PDF des PV
+
+Chaque fiche Excel est aussi exportée en **PDF**, à côté du classeur et sous le
+même nom. Ces classeurs (macros, contrôles ActiveX) ne sont rendus fidèlement
+que par Excel : le logiciel pilote donc **Microsoft Excel** en arrière-plan,
+comme « Fichier > Exporter > PDF » :
+
+- instance d'Excel dédiée et invisible — vos classeurs déjà ouverts ne sont
+  pas touchés ;
+- **macros désactivées** à l'ouverture, classeur ouvert en **lecture seule**
+  et refermé sans enregistrer ;
+- classeur recalculé avant l'export (le n° du MSA apparaît dans les en-têtes) ;
+- seules les feuilles visibles sont exportées, selon leurs zones d'impression.
+
+L'export demande **Windows et Microsoft Excel** sur le poste de test. Sans
+Excel, les PV `.xlsm` sont produits normalement et un message indique que les
+PDF n'ont pas pu l'être. L'export tourne en arrière-plan : la fenêtre reste
+utilisable pendant les quelques secondes que prend chaque fiche.
+
 ## Dossier d'enregistrement
 
 Le champ **Dossier d'enregistrement** (onglet « PV Excel et dossier ») fixe où
@@ -221,8 +240,10 @@ numéro n'est saisi :
 - `campagne_avant_*.json` / `campagne_apres_*.json` — relevés bruts (le JSON
   « avant » sert de référence à l'étape 24) ;
 - `releves_*.csv` — tableau des RAW_VALUE (séparateur `;`, ouvrable dans Excel) ;
-- `PV_comparaison_*.txt` — synthèse avant/après avec la conclusion, à reporter
-  sur le PV de test ;
+- `comparaison_MSA<rang>_<n° du MSA>_*.txt` — **un rapport de comparaison
+  avant/après par MSA** (ses deux disques, ses alertes, sa conclusion) ;
+- `…_Fiche-de-Test-SAV_<n° du MSA>.xlsm` et `.pdf` — la fiche de test Excel de
+  chaque MSA et son export PDF (voir « PV Excel ») ;
 - `adresses_MAC_*.txt` — relevé des adresses MAC (voir ci-dessus) ;
 - `capacite_stockage_*.txt` — capacité de chaque module CPU enregistreur ;
 - `rapport_avant_*.html` / `rapport_avant_apres_*.html` — rapport visuel
@@ -272,6 +293,7 @@ Organisation du code :
 - `msa_test/web_mac.py` — relevé des adresses MAC via l'interface web du NVR ;
 - `msa_test/stockage.py` — requête `:8080/storage/status` et capacité relevée ;
 - `msa_test/pv_excel.py` — remplissage des fiches de test Excel (édition XML ciblée) ;
+- `msa_test/pdf_excel.py` — export PDF des fiches par pilotage d'Excel (COM) ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
 - `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.
