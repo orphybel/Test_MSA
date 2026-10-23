@@ -197,6 +197,7 @@ def analyser_pv(chemin_pv):
     except (OSError, zipfile.BadZipFile) as err:
         raise ErreurPV("PV illisible (%s) : %s" % (os.path.basename(chemin_pv), err))
 
+    candidats = []
     with archive:
         feuilles = _chemins_feuilles(archive)
         chaines = _lire_chaines_partagees(archive)
@@ -251,18 +252,48 @@ def analyser_pv(chemin_pv):
             for ref in cellules.values():
                 col, ligne = re.match(r"([A-Z]+)(\d+)$", ref).groups()
                 valeurs[ref] = textes.get((col, int(ligne)), "")
-            return {
-                "chemin": chemin_pv,
-                "modele": modele,
-                "variante": variante_du_nom(chemin_pv),
-                "feuille": nom,
-                "cellules": cellules,
-                "valeurs": valeurs,
-            }
-    raise ErreurPV(
-        "Aucune ligne « @MAC » trouvée dans %s : ce n'est pas une fiche de test "
-        "NVR attendue." % os.path.basename(chemin_pv)
-    )
+            candidats.append(
+                {
+                    "chemin": chemin_pv,
+                    "modele": modele,
+                    "variante": variante_du_nom(chemin_pv),
+                    "feuille": nom,
+                    "cellules": cellules,
+                    "valeurs": valeurs,
+                }
+            )
+    return _choisir_feuille(chemin_pv, candidats)
+
+
+def _choisir_feuille(chemin_pv, candidats):
+    """Retient la feuille de constitution du produit, sans jamais deviner.
+
+    Les fiches comportent d'autres onglets (tests, mesures...) qui ne doivent
+    pas etre modifies. La feuille "Constit produit..." est preferee ; s'il
+    reste plusieurs feuilles possibles, l'ecriture est refusee plutot que de
+    risquer d'ecrire au mauvais endroit.
+    """
+    if not candidats:
+        raise ErreurPV(
+            "Aucune ligne « @MAC » trouvée dans %s : ce n'est pas une fiche de "
+            "test NVR attendue." % os.path.basename(chemin_pv)
+        )
+    preferes = [c for c in candidats if _normaliser(c["feuille"]).startswith("constit")]
+    retenus = preferes or candidats
+    if len(retenus) > 1:
+        raise ErreurPV(
+            "Plusieurs onglets de %s comportent des lignes « @MAC » (%s) : "
+            "impossible de savoir lequel compléter."
+            % (
+                os.path.basename(chemin_pv),
+                ", ".join("« %s »" % c["feuille"] for c in retenus),
+            )
+        )
+    retenu = retenus[0]
+    retenu["autres_feuilles_mac"] = [
+        c["feuille"] for c in candidats if c["feuille"] != retenu["feuille"]
+    ]
+    return retenu
 
 
 def variante_du_nom(chemin):
@@ -343,6 +374,14 @@ def preparer(chemin_pv, releve):
         )
     if CLE_SWITCH not in adresses:
         alertes.append("Adresse de la carte Contrôle/Switch absente du relevé.")
+    if analyse.get("autres_feuilles_mac"):
+        alertes.append(
+            "Lignes « @MAC » aussi présentes dans %s : seul l'onglet « %s » est complété."
+            % (
+                ", ".join("« %s »" % f for f in analyse["autres_feuilles_mac"]),
+                analyse["feuille"],
+            )
+        )
 
     for cle, cellule in sorted(
         analyse["cellules"].items(), key=lambda c: -1 if c[0] == CLE_SWITCH else c[0]

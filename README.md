@@ -145,6 +145,14 @@ intact).
 Comme pour les PV de test, seules les cellules visées sont modifiées dans le
 classeur : macros, contrôles ActiveX et mise en forme sont conservés.
 
+**Autres onglets du PV.** Les fiches réelles comportent d'autres onglets
+(tests, mesures…) qui ne doivent pas être modifiés : seul l'onglet de
+constitution du produit est réécrit, tous les autres — ainsi que la structure
+du classeur, les styles et les textes — sont recopiés à l'identique. Si
+plusieurs onglets comportent des lignes `@MAC`, l'onglet « Constit produit… »
+est retenu et les autres sont signalés ; s'il en reste plusieurs possibles,
+l'écriture est refusée plutôt que de risquer le mauvais onglet.
+
 ## Dossier d'enregistrement
 
 Le champ **Dossier d'enregistrement** (onglet « PV Excel et dossier ») fixe où

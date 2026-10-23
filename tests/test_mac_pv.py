@@ -333,3 +333,67 @@ def test_pv_ouvert_dans_excel(pv_rerng, tmp_path, monkeypatch):
         mac_pv.ecrire(plan)
     assert open(pv_rerng, "rb").read() == avant
     assert not os.path.exists(pv_rerng + ".tmp")
+
+
+# ---------------------------------------------------------------------- #
+# PV complet : les autres onglets ne doivent pas etre modifies
+# ---------------------------------------------------------------------- #
+def _pv_multi_onglets(chemin, piege_constit=False):
+    """Fiche a plusieurs onglets, comme les PV reels."""
+    _fiche(chemin, "MP14-NVR-6", 6, feuille="Constit produit(1_2)")
+    wb = openpyxl.load_workbook(chemin)
+    suite = wb.create_sheet("Constit produit(2_2)")
+    suite["A12"] = "Module Stockage Amovible (Slot n°0)"
+    final = wb.create_sheet("Test final (1_1)")
+    final["B2"] = "='Constit produit(1_2)'!F16"
+    final["A10"], final["C10"] = "Mesure", 12.5
+    mesures = wb.create_sheet("App Mesures")
+    mesures.sheet_state = "hidden"
+    # piege : un onglet de mesures qui contient lui aussi un bloc et une ligne @MAC
+    mesures["A3"] = "Module Contrôle / Switch Ethernet"
+    mesures["B5"] = "@MAC"
+    mesures["F5"] = "ne pas toucher"
+    if piege_constit:
+        suite["A14"] = "Module Contrôle / Switch Ethernet"
+        suite["B16"] = "@MAC"
+    wb.save(chemin)
+    return str(chemin)
+
+
+def test_seul_l_onglet_de_constitution_est_modifie(tmp_path):
+    pv = _pv_multi_onglets(tmp_path / "X301226_9-MP14_FicheTest_MP14-NVR-6 N°250411-0135006-00057.xlsx")
+    with zipfile.ZipFile(pv) as archive:
+        avant = {n: archive.read(n) for n in archive.namelist()}
+        feuilles = mac_pv._chemins_feuilles(archive)
+
+    plan = mac_pv.preparer(pv, mac_pv.lire_releve_mac(_releve(tmp_path)))
+    assert plan["pv"]["feuille"] == "Constit produit(1_2)"
+    assert any("App Mesures" in a for a in plan["alertes"])  # onglet ecarte signale
+    mac_pv.ecrire(plan)
+
+    with zipfile.ZipFile(pv) as archive:
+        apres = {n: archive.read(n) for n in archive.namelist()}
+    modifiees = {n for n in avant if avant[n] != apres[n]}
+    assert modifiees == {feuilles["Constit produit(1_2)"]}
+    # chaque autre onglet, le classeur, les styles et les textes sont identiques
+    for nom in ("Constit produit(2_2)", "Test final (1_1)", "App Mesures"):
+        assert apres[feuilles[nom]] == avant[feuilles[nom]], nom
+    communs = [e for e in ("xl/workbook.xml", "xl/styles.xml", "xl/sharedStrings.xml") if e in avant]
+    assert "xl/workbook.xml" in communs and "xl/styles.xml" in communs
+    for entree in communs:
+        assert apres[entree] == avant[entree], entree
+
+    wb = openpyxl.load_workbook(pv)
+    assert wb["App Mesures"].sheet_state == "hidden"
+    assert wb["App Mesures"]["F5"].value == "ne pas toucher"
+    assert wb["Test final (1_1)"]["B2"].value == "='Constit produit(1_2)'!F16"
+    assert wb["Constit produit(1_2)"]["F16"].value == "00:10:02:0F:DA:AD"
+
+
+def test_plusieurs_onglets_de_constitution_possibles(tmp_path):
+    """Deux onglets "Constit produit" avec des lignes @MAC : refus, pas de devinette."""
+    pv = _pv_multi_onglets(tmp_path / "pv.xlsx", piege_constit=True)
+    avant = open(pv, "rb").read()
+    with pytest.raises(ErreurPV, match="Plusieurs onglets"):
+        mac_pv.preparer(pv, mac_pv.lire_releve_mac(_releve(tmp_path)))
+    assert open(pv, "rb").read() == avant
