@@ -109,19 +109,36 @@ Deux familles de fiches sont reconnues :
 | X301226 `MP14_FicheTest_MP14-NVR-X` | MP14-NVR-4 / -5 / -6 | carte Contrôle/Switch + 6 slots CPU |
 | X301281 `RERNG_NVR_Fiche-de-Test` | RERNG-NVR-2 | carte Contrôle/Switch + 2 slots CPU |
 
-**Déroulé.**
+**Déroulé (traitement par dossier).**
 
-1. Le relevé de MAC le plus récent du dossier d'enregistrement est proposé
-   (bouton **Dernier relevé de MAC**, ou **Parcourir...**).
-2. Le **PV concordant** est recherché dans le **Dossier des PV NVR** d'après le
-   n° de série du NVR du relevé : `390` retrouve `…N°2609026-0152011-00390.xlsm`
-   (comparaison au dernier groupe de chiffres ; un n° complet est comparé tel
-   quel). **Autre PV...** permet de choisir un fichier à la main.
-3. Un **aperçu** liste, pour chaque module, la cellule visée, l'adresse à
-   écrire et la valeur actuelle du PV — rien n'est encore modifié.
-4. **Écrire les MAC dans le PV** écrit les adresses dans le PV, sur place,
-   après en avoir fait une copie dans `sauvegardes_pv\` (dossier
-   d'enregistrement).
+1. **Dossier des relevés MAC** : tous les `adresses_MAC*.txt` du dossier et de
+   ses sous-dossiers sont lus (vide = dossier d'enregistrement). Chaque relevé
+   porte le n° de son NVR.
+2. **Dossier des PV NVR** : chaque relevé y est associé à la fiche de son NVR
+   d'après ce n° : `390` retrouve `…N°2609026-0152011-00390.xlsm` (comparaison
+   au dernier groupe de chiffres ; un n° complet est comparé tel quel).
+3. Le tableau donne une ligne par relevé avec son état :
+
+   | État | Signification |
+   |---|---|
+   | ✔ Prêt à écrire | PV trouvé, adresses à écrire |
+   | ⚠ À vérifier avant écriture | une alerte (ex. PV `MP14-NVR-4` mais 2 modules relevés) |
+   | ⚠ Remplacement à confirmer | une cellule contient déjà une autre adresse |
+   | = Déjà à jour | toutes les adresses sont déjà dans le PV |
+   | ✖ PV introuvable / Plusieurs PV possibles / N° de NVR absent | à associer à la main |
+   | ✖ Erreur | relevé ou PV illisible, mauvais PV… |
+   | · Relevé plus ancien, ignoré | un relevé plus récent existe pour ce NVR |
+
+   Un clic sur une ligne en affiche le détail ; **Détail** (ou double-clic)
+   liste cellule par cellule l'adresse à écrire et la valeur actuelle du PV.
+   **Associer un PV...** choisit à la main la fiche d'un relevé (PV
+   introuvable, plusieurs PV possibles) ; l'association est conservée d'une
+   analyse à l'autre.
+4. **Écrire les MAC dans les PV** écrit tous les PV prêts. Les PV « à
+   vérifier » ou en remplacement ne sont écrits qu'avec votre accord, demandé
+   en une fois. Chaque PV est copié dans `sauvegardes_pv\` (dossier
+   d'enregistrement) avant d'être écrit sur place ; un PV ouvert dans Excel
+   est signalé sans empêcher l'écriture des autres.
 
 **Repérage des cellules.** Dans ces fiches, chaque bloc de module se termine
 par une ligne dont la colonne B vaut `@MAC` ; seule la colonne **N° Série (F)**

@@ -439,3 +439,176 @@ def ecrire(plan, dossier_sauvegarde=None):
             xml = _remplacer_cellule(xml, ligne["cellule"], ligne["mac"])
         ecrire_archive(source, chemin, {feuilles[analyse["feuille"]]: xml})
     return sauvegarde
+
+
+# ---------------------------------------------------------------------- #
+# Traitement par lot : un dossier de releves, un dossier de PV
+# ---------------------------------------------------------------------- #
+PRET = "pret"
+A_VERIFIER = "a_verifier"
+A_JOUR = "a_jour"
+REMPLACEMENT = "remplacement"
+SANS_PV = "sans_pv"
+PLUSIEURS_PV = "plusieurs_pv"
+SANS_NUMERO = "sans_numero"
+ERREUR = "erreur"
+IGNORE = "ignore"
+
+LIBELLES_ETATS = {
+    PRET: "Prêt à écrire",
+    A_VERIFIER: "À vérifier avant écriture",
+    A_JOUR: "Déjà à jour",
+    REMPLACEMENT: "Remplacement à confirmer",
+    SANS_PV: "PV introuvable",
+    PLUSIEURS_PV: "Plusieurs PV possibles",
+    SANS_NUMERO: "N° de NVR absent du relevé",
+    ERREUR: "Erreur",
+    IGNORE: "Relevé plus ancien, ignoré",
+}
+
+# Etats dont l'ecriture est possible ; les deux derniers demandent une
+# confirmation de l'operateur (alerte, ou adresse deja presente et differente).
+ETATS_ECRIVABLES = (PRET, A_VERIFIER, REMPLACEMENT)
+ETATS_A_CONFIRMER = (A_VERIFIER, REMPLACEMENT)
+
+
+def releves_du_dossier(dossier):
+    """Releves d'adresses MAC du dossier et de ses sous-dossiers."""
+    if not dossier or not os.path.isdir(dossier):
+        return []
+    trouves = []
+    for racine, _, fichiers in os.walk(dossier):
+        for nom in fichiers:
+            if nom.startswith("adresses_MAC") and nom.lower().endswith(".txt"):
+                trouves.append(os.path.join(racine, nom))
+    return sorted(trouves)
+
+
+def _cle_nvr(serie):
+    """Identifiant de comparaison : 390, 0390 et ...-00390 designent le meme NVR."""
+    serie = re.sub(r"\s", "", serie or "")
+    groupes = re.findall(r"\d+", serie)
+    return str(int(groupes[-1])) if groupes else serie.lower()
+
+
+def _recence(entree):
+    return (entree["releve"].get("date") or "", os.path.getmtime(entree["chemin_releve"]))
+
+
+def _etat_du_plan(plan):
+    if plan["erreurs"]:
+        return ERREUR, " ".join(plan["erreurs"])
+    if remplacements(plan):
+        return REMPLACEMENT, "%d cellule(s) contiennent une autre adresse." % len(remplacements(plan))
+    if all(l["actuelle"].strip().upper() == l["mac"] for l in plan["lignes"]):
+        return A_JOUR, "Toutes les adresses sont déjà dans le PV."
+    return PRET, ""
+
+
+def preparer_entree(entree, chemin_pv):
+    """(Re)calcule le plan d'une entree pour le PV donne."""
+    entree["pv"] = chemin_pv
+    entree["plan"] = None
+    try:
+        entree["plan"] = preparer(chemin_pv, entree["releve"])
+    except ErreurPV as err:
+        entree["etat"], entree["message"] = ERREUR, str(err)
+        return entree
+    entree["etat"], entree["message"] = _etat_du_plan(entree["plan"])
+    if entree["plan"]["alertes"] and entree["etat"] != ERREUR:
+        if entree["etat"] == PRET:
+            entree["etat"] = A_VERIFIER  # pas d'ecriture sans accord
+        entree["message"] = " ".join(
+            filter(None, [entree["message"]] + entree["plan"]["alertes"])
+        )
+    return entree
+
+
+def preparer_lot(dossier_releves, dossier_pv):
+    """Associe chaque releve du dossier a la fiche de test de son NVR.
+
+    Retourne une entree par releve, triee par numero de NVR :
+      {chemin_releve, releve, serie, pv, pvs_possibles, plan, etat, message}
+    Pour un meme NVR, seul le releve le plus recent est retenu. Un NVR dont
+    plusieurs PV correspondent n'est pas traite sans choix de l'operateur.
+    """
+    entrees = []
+    for chemin in releves_du_dossier(dossier_releves):
+        entree = {
+            "chemin_releve": chemin,
+            "releve": None,
+            "serie": "",
+            "pv": None,
+            "pvs_possibles": [],
+            "plan": None,
+            "etat": ERREUR,
+            "message": "",
+        }
+        try:
+            entree["releve"] = lire_releve_mac(chemin)
+        except ErreurPV as err:
+            entree["message"] = str(err)
+            entrees.append(entree)
+            continue
+        entree["serie"] = entree["releve"]["serie_nvr"]
+        entrees.append(entree)
+
+    # Un seul releve par NVR : le plus recent.
+    par_nvr = {}
+    for entree in entrees:
+        if entree["releve"] is not None and entree["serie"]:
+            par_nvr.setdefault(_cle_nvr(entree["serie"]), []).append(entree)
+    for groupe in par_nvr.values():
+        groupe.sort(key=_recence, reverse=True)
+        for ancien in groupe[1:]:
+            ancien["etat"] = IGNORE
+            ancien["message"] = "Relevé plus récent : %s" % os.path.basename(
+                groupe[0]["chemin_releve"]
+            )
+
+    for entree in entrees:
+        if entree["releve"] is None or entree["etat"] == IGNORE:
+            continue
+        if not entree["serie"]:
+            entree["etat"] = SANS_NUMERO
+            entree["message"] = "Le relevé ne porte pas de n° de NVR : associez le PV à la main."
+            continue
+        possibles = pv_concordants(dossier_pv, entree["serie"])
+        entree["pvs_possibles"] = possibles
+        if not possibles:
+            entree["etat"] = SANS_PV
+            entree["message"] = "Aucun PV pour le NVR n° %s dans le dossier des PV." % entree["serie"]
+        elif len(possibles) > 1:
+            entree["etat"] = PLUSIEURS_PV
+            entree["message"] = "PV possibles : " + ", ".join(os.path.basename(p) for p in possibles)
+        else:
+            preparer_entree(entree, possibles[0])
+
+    def ordre(entree):
+        cle = _cle_nvr(entree["serie"]) if entree["serie"] else ""
+        return (cle.zfill(12) if cle.isdigit() else "~" + cle, entree["etat"] == IGNORE)
+
+    return sorted(entrees, key=ordre)
+
+
+def ecrire_lot(entrees, dossier_sauvegarde=None, avec_confirmation=False):
+    """Ecrit les adresses dans chaque PV pret.
+
+    Les entrees a verifier ou en remplacement ne sont ecrites que si
+    `avec_confirmation` (accord donne par l'operateur).
+    Une erreur sur un PV (fichier ouvert dans Excel...) n'empeche pas les
+    autres. Retourne la liste des (entree, sauvegarde ou None, erreur ou None)
+    des PV traites.
+    """
+    resultats = []
+    for entree in entrees:
+        if entree["etat"] == PRET or (
+            avec_confirmation and entree["etat"] in ETATS_A_CONFIRMER
+        ):
+            try:
+                sauvegarde = ecrire(entree["plan"], dossier_sauvegarde)
+            except (ErreurPV, OSError) as err:
+                resultats.append((entree, None, str(err)))
+                continue
+            resultats.append((entree, sauvegarde, None))
+    return resultats

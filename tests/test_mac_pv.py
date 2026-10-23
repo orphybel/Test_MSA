@@ -397,3 +397,128 @@ def test_plusieurs_onglets_de_constitution_possibles(tmp_path):
     with pytest.raises(ErreurPV, match="Plusieurs onglets"):
         mac_pv.preparer(pv, mac_pv.lire_releve_mac(_releve(tmp_path)))
     assert open(pv, "rb").read() == avant
+
+
+# ---------------------------------------------------------------------- #
+# Traitement par lot : dossier de releves + dossier de PV
+# ---------------------------------------------------------------------- #
+def _releve_nvr(dossier, serie, date, cpu0="00:e0:4b:8c:4b:cf", nom=None):
+    texte = RELEVE.replace("N° de serie NVR : 390", "N° de serie NVR : %s" % serie)
+    texte = texte.replace("2026-10-23T11:31:15", date).replace("00:e0:4b:8c:4b:cf", cpu0)
+    os.makedirs(dossier, exist_ok=True)
+    chemin = os.path.join(dossier, nom or "adresses_MAC_%s_%s.txt" % (serie, date.replace(":", "-")))
+    with open(chemin, "w", encoding="utf-8") as fichier:
+        fichier.write(texte)
+    return chemin
+
+
+@pytest.fixture
+def lot(tmp_path):
+    releves, pvs = tmp_path / "releves", tmp_path / "pv"
+    pvs.mkdir()
+    _fiche(pvs / "X301281-9_RERNG_NVR_Fiche-de-Test-DUP N°2609026-0152011-00390.xlsx", "RERNG-NVR-2", 2)
+    _fiche(pvs / "X301281-9_RERNG_NVR_Fiche-de-Test-DUP N°2609026-0152011-00391.xlsx", "RERNG-NVR-2", 2)
+    _fiche(pvs / "X301226_8-MP14_FicheTest_MP14-NVR-X_N°260408-0147460-00196.xlsx", "MP14-NVR-X", 6)
+    _fiche(pvs / "X301226_9-MP14_FicheTest_MP14-NVR-X_N°260408-0147460-00196.xlsx", "MP14-NVR-X", 6)
+    _releve_nvr(str(releves), "390", "2026-10-20T09:00:00", cpu0="00:e0:4b:00:00:01")  # ancien
+    _releve_nvr(str(releves), "390", "2026-10-23T11:31:15")
+    _releve_nvr(str(releves / "jour2"), "391", "2026-10-22T10:00:00")  # sous-dossier
+    _releve_nvr(str(releves), "196", "2026-10-22T10:00:00")
+    _releve_nvr(str(releves), "999", "2026-10-22T10:00:00")
+    _releve_nvr(str(releves), "...", "2026-10-22T12:00:00", nom="adresses_MAC_sans_numero.txt")
+    (releves / "adresses_MAC_casse.txt").write_text("pas un releve", encoding="utf-8")
+    (releves / "notes.txt").write_text("ignore", encoding="utf-8")
+    return str(releves), str(pvs)
+
+
+def _par_nvr(entrees):
+    return {(e["serie"], os.path.basename(e["chemin_releve"])): e for e in entrees}
+
+
+def test_releves_du_dossier_et_sous_dossiers(lot):
+    noms = [os.path.basename(c) for c in mac_pv.releves_du_dossier(lot[0])]
+    assert len(noms) == 7  # notes.txt ignore, sous-dossier inclus
+    assert "notes.txt" not in noms
+
+
+def test_etats_du_lot(lot):
+    entrees = mac_pv.preparer_lot(*lot)
+    etats = {(e["serie"] or os.path.basename(e["chemin_releve"])): e["etat"] for e in entrees
+             if e["etat"] != mac_pv.IGNORE}
+    assert etats["390"] == mac_pv.PRET
+    assert etats["391"] == mac_pv.PRET
+    assert etats["196"] == mac_pv.PLUSIEURS_PV
+    assert etats["999"] == mac_pv.SANS_PV
+    assert etats["adresses_MAC_sans_numero.txt"] == mac_pv.SANS_NUMERO
+    assert etats["adresses_MAC_casse.txt"] == mac_pv.ERREUR
+
+
+def test_le_releve_le_plus_recent_l_emporte(lot):
+    entrees = [e for e in mac_pv.preparer_lot(*lot) if e["serie"] == "390"]
+    retenu = [e for e in entrees if e["etat"] != mac_pv.IGNORE]
+    ignore = [e for e in entrees if e["etat"] == mac_pv.IGNORE]
+    assert len(retenu) == 1 and len(ignore) == 1
+    assert "2026-10-23" in retenu[0]["chemin_releve"]
+    assert retenu[0]["plan"]["lignes"][1]["mac"] == "00:E0:4B:8C:4B:CF"
+    assert os.path.basename(retenu[0]["chemin_releve"]) in ignore[0]["message"]
+
+
+def test_chaque_nvr_trouve_son_pv(lot):
+    entrees = {e["serie"]: e for e in mac_pv.preparer_lot(*lot) if e["etat"] == mac_pv.PRET}
+    assert entrees["390"]["pv"].endswith("-00390.xlsx")
+    assert entrees["391"]["pv"].endswith("-00391.xlsx")
+
+
+def test_plusieurs_pv_sans_devinette_puis_association(lot):
+    entree = [e for e in mac_pv.preparer_lot(*lot) if e["serie"] == "196"][0]
+    assert entree["pv"] is None and len(entree["pvs_possibles"]) == 2
+    mac_pv.preparer_entree(entree, entree["pvs_possibles"][0])
+    assert entree["etat"] == mac_pv.PRET
+
+
+def test_ecriture_du_lot(lot):
+    entrees = mac_pv.preparer_lot(*lot)
+    resultats = mac_pv.ecrire_lot(entrees, os.path.join(lot[1], "..", "sauv"))
+    assert sorted(e["serie"] for e, _, erreur in resultats if erreur is None) == ["390", "391"]
+    pv390 = [e["pv"] for e in entrees if e["serie"] == "390" and e["pv"]][0]
+    assert lire_cellule(pv390, "Constit produit", "F19") == "00:E0:4B:8C:4B:CF"
+    # deuxieme analyse : tout est a jour, rien a reecrire
+    apres = mac_pv.preparer_lot(*lot)
+    assert {e["serie"]: e["etat"] for e in apres if e["serie"] in ("390", "391") and e["etat"] != mac_pv.IGNORE} \
+        == {"390": mac_pv.A_JOUR, "391": mac_pv.A_JOUR}
+    assert mac_pv.ecrire_lot(apres) == []
+
+
+def test_alerte_et_remplacement_demandent_confirmation(lot, tmp_path):
+    pvs = lot[1]
+    _fiche(os.path.join(pvs, "X301226_9-MP14_FicheTest_MP14-NVR-4_N°260212-0154864-00107.xlsx"),
+           "MP14-NVR-4", 6)
+    _releve_nvr(lot[0], "107", "2026-10-22T10:00:00")  # 2 CPU pour un NVR-4 : alerte
+    entrees = mac_pv.preparer_lot(*lot)
+    e107 = [e for e in entrees if e["serie"] == "107"][0]
+    assert e107["etat"] == mac_pv.A_VERIFIER
+
+    sans_accord = mac_pv.ecrire_lot(entrees)
+    assert "107" not in [e["serie"] for e, _, _ in sans_accord]
+    avec_accord = mac_pv.ecrire_lot(mac_pv.preparer_lot(*lot), avec_confirmation=True)
+    assert "107" in [e["serie"] for e, _, erreur in avec_accord if erreur is None]
+
+
+def test_un_echec_n_arrete_pas_le_lot(lot, monkeypatch):
+    entrees = mac_pv.preparer_lot(*lot)
+    vrai_ecrire = mac_pv.ecrire
+
+    def ecrire(plan, dossier=None):
+        if plan["pv"]["chemin"].endswith("-00390.xlsx"):
+            raise ErreurPV("PV ouvert dans Excel")
+        return vrai_ecrire(plan, dossier)
+
+    monkeypatch.setattr(mac_pv, "ecrire", ecrire)
+    resultats = {e["serie"]: erreur for e, _, erreur in mac_pv.ecrire_lot(entrees)}
+    assert resultats["390"] == "PV ouvert dans Excel"
+    assert resultats["391"] is None
+
+
+def test_dossier_vide_ou_absent(tmp_path):
+    assert mac_pv.preparer_lot(str(tmp_path), str(tmp_path)) == []
+    assert mac_pv.preparer_lot(str(tmp_path / "absent"), "") == []
