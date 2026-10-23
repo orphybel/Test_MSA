@@ -277,3 +277,51 @@ def test_dossier_d_enregistrement_choisi(tmp_path):
     finally:
         rapport.choisir_dossier(None)
     assert rapport.dossier_resultats(str(tmp_path)).endswith("resultats_msa")
+
+
+# ---------------------------------------------------------------------- #
+# Non-regression : cellule cible vide (<c r="..." s="..."/>)
+# ---------------------------------------------------------------------- #
+def test_cellule_cible_vide_n_efface_pas_les_suivantes():
+    """Une cellule vide auto-fermante etait lue comme ouverte : son
+    remplacement englobait toutes les cellules jusqu'au </c> suivant."""
+    from msa_test.pv_excel import _remplacer_cellule, _trouver_cellule
+
+    xml = (
+        '<row r="20"><c r="F20" s="81"/><c r="G20" s="84"/></row>'
+        '<row r="21"><c r="A21" s="20" t="s"><v>53</v></c></row>'
+    )
+    assert _trouver_cellule(xml, "F20").group(0) == '<c r="F20" s="81"/>'
+    resultat = _remplacer_cellule(xml, "F20", "00:AA")
+    assert '<c r="G20" s="84"/>' in resultat
+    assert '<c r="A21" s="20" t="s"><v>53</v></c>' in resultat
+    assert resultat.count("<row") == 2
+
+
+def test_modele_avec_cellules_cibles_vides(tmp_path):
+    """Fiche dont F12, B24 et C21 sont vides mais mises en forme."""
+    from openpyxl.styles import Border, Side
+
+    trait = Side(style="thin")
+    wb = openpyxl.Workbook()
+    wb.active.title = FEUILLE_CONSTITUTION
+    constitution = wb[FEUILLE_CONSTITUTION]
+    for ref in ("F12", "G12", "B23", "B24", "C24"):
+        constitution[ref].border = Border(left=trait, right=trait)
+    constitution["A25"] = "ligne suivante"
+    final = wb.create_sheet(FEUILLE_TEST_FINAL)
+    for ref in ("C20", "D20", "C21", "D21", "E21"):
+        final[ref].border = Border(left=trait, right=trait)
+    final["A22"] = "a conserver"
+    modele = str(tmp_path / "vierge.xlsx")
+    wb.save(modele)
+
+    sortie = str(tmp_path / "pv.xlsx")
+    remplir_pv(modele, sortie, "N1", "OP", VALEURS, DATE)
+    constitution, final = _relire(sortie)
+    assert constitution["F12"].value == "N1"
+    assert constitution["B24"].value == "OP"
+    assert constitution["A25"].value == "ligne suivante"
+    assert constitution["G12"].border.left.style == "thin"
+    assert final["C21"].value == 12
+    assert final["A22"].value == "a conserver"

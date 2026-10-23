@@ -131,8 +131,18 @@ def lire_cellule(chemin_xlsm, feuille, reference):
 # Ecriture des cellules
 # ---------------------------------------------------------------------- #
 def _trouver_cellule(xml, reference):
+    """Repere une cellule, vide (<c .../>) ou avec contenu (<c ...>...</c>).
+
+    La forme auto-fermante est testee en premier et les attributs d'une
+    cellule ouverte ne peuvent pas finir par "/" : sans cela, une cellule
+    vide serait lue comme ouverte et la recherche engloberait toutes les
+    cellules suivantes jusqu'au prochain </c>.
+    """
+    ref = re.escape(reference)
     return re.search(
-        r'<c r="%s"(?:\s[^>]*)?(?:/>|>.*?</c>)' % re.escape(reference), xml, re.S
+        r'<c r="%s"(?:\s[^>]*?)?/>|<c r="%s"(?:\s[^>]*[^/>])?>.*?</c>' % (ref, ref),
+        xml,
+        re.S,
     )
 
 
@@ -309,16 +319,48 @@ def remplir_pv(modele, destination, numero_msa, operateur, valeurs, date=None):
             source.read("xl/workbook.xml").decode("utf-8")
         )
 
-        os.makedirs(os.path.dirname(os.path.abspath(destination)), exist_ok=True)
-        temporaire = destination + ".tmp"
+        ecrire_archive(source, destination, modifications)
+    return destination
+
+
+def ecrire_archive(source, destination, modifications):
+    """Recopie l'archive `source` (ZipFile ouvert) vers `destination`.
+
+    Les entrees presentes dans `modifications` (chemin -> XML) sont
+    remplacees, toutes les autres sont recopiees octet pour octet dans le meme
+    ordre. L'ecriture passe par un fichier temporaire : le fichier de
+    destination, qui peut etre la source elle-meme, n'est remplace qu'une fois
+    l'archive complete. Un classeur ouvert dans Excel ne peut pas etre
+    remplace : l'erreur est alors explicite.
+    """
+    destination = os.path.abspath(destination)
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    temporaire = destination + ".tmp"
+    try:
         with zipfile.ZipFile(temporaire, "w") as sortie:
             for info in source.infolist():
                 if info.filename in modifications:
                     sortie.writestr(info, modifications[info.filename].encode("utf-8"))
                 else:
                     sortie.writestr(info, source.read(info.filename))
-    os.replace(temporaire, destination)
-    return destination
+    except OSError as err:
+        _supprimer(temporaire)
+        raise ErreurPV("Ecriture impossible de %s : %s" % (destination, err))
+    try:
+        os.replace(temporaire, destination)
+    except OSError as err:
+        _supprimer(temporaire)
+        raise ErreurPV(
+            "%s ne peut pas etre remplace : fermez-le dans Excel puis "
+            "recommencez (%s)." % (os.path.basename(destination), err)
+        )
+
+
+def _supprimer(chemin):
+    try:
+        os.remove(chemin)
+    except OSError:
+        pass
 
 
 def generer_pvs(modele, dossier, numeros, campagne_avant, campagne_apres, operateur,

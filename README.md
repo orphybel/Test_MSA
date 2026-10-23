@@ -98,6 +98,53 @@ Excel, les PV `.xlsm` sont produits normalement et un message indique que les
 PDF n'ont pas pu l'être. L'export tourne en arrière-plan : la fenêtre reste
 utilisable pendant les quelques secondes que prend chaque fiche.
 
+## Report des adresses MAC dans le PV du NVR (onglet « MAC → PV NVR »)
+
+Cet onglet écrit les adresses MAC d'un relevé (`adresses_MAC_*.txt`, produit
+par **Relever les adresses MAC**) dans la fiche de test du NVR correspondant.
+Deux familles de fiches sont reconnues :
+
+| Fiche | NVR | Cellules @MAC |
+|---|---|---|
+| X301226 `MP14_FicheTest_MP14-NVR-X` | MP14-NVR-4 / -5 / -6 | carte Contrôle/Switch + 6 slots CPU |
+| X301281 `RERNG_NVR_Fiche-de-Test` | RERNG-NVR-2 | carte Contrôle/Switch + 2 slots CPU |
+
+**Déroulé.**
+
+1. Le relevé de MAC le plus récent du dossier d'enregistrement est proposé
+   (bouton **Dernier relevé de MAC**, ou **Parcourir...**).
+2. Le **PV concordant** est recherché dans le **Dossier des PV NVR** d'après le
+   n° de série du NVR du relevé : `390` retrouve `…N°2609026-0152011-00390.xlsm`
+   (comparaison au dernier groupe de chiffres ; un n° complet est comparé tel
+   quel). **Autre PV...** permet de choisir un fichier à la main.
+3. Un **aperçu** liste, pour chaque module, la cellule visée, l'adresse à
+   écrire et la valeur actuelle du PV — rien n'est encore modifié.
+4. **Écrire les MAC dans le PV** écrit les adresses dans le PV, sur place,
+   après en avoir fait une copie dans `sauvegardes_pv\` (dossier
+   d'enregistrement).
+
+**Repérage des cellules.** Dans ces fiches, chaque bloc de module se termine
+par une ligne dont la colonne B vaut `@MAC` ; seule la colonne **N° Série (F)**
+de cette ligne est laissée libre. Les lignes `@MAC` sont repérées à la lecture
+et rattachées au bloc qui les précède (« Module Contrôle / Switch »,
+« Module CPU Enreg. Vidéo (slot n°k) ») : aucun numéro de ligne n'est figé.
+Les adresses sont écrites en majuscules (`00:10:02:0F:DA:AD`), comme sur
+l'interface du NVR. Les slots non équipés restent vides.
+
+**Sources.** Les adresses de la page « Administration : Versions » du NVR font
+foi ; celles relevées en SSH sur chaque MSA servent de repli et de contrôle
+croisé (un désaccord est signalé). Les caméras sont ignorées.
+
+**Contrôles.** L'écriture est refusée si le relevé compte plus de modules CPU
+que la fiche n'a de slots (mauvais PV). Sont signalés : un nom de PV
+`MP14-NVR-4/5/6` qui ne correspond pas au nombre de modules relevés, une
+cellule déjà remplie avec une autre adresse (confirmation demandée avant de la
+remplacer), un PV ouvert dans Excel (fermez-le et recommencez — le PV reste
+intact).
+
+Comme pour les PV de test, seules les cellules visées sont modifiées dans le
+classeur : macros, contrôles ActiveX et mise en forme sont conservés.
+
 ## Dossier d'enregistrement
 
 Le champ **Dossier d'enregistrement** (onglet « PV Excel et dossier ») fixe où
@@ -294,6 +341,7 @@ Organisation du code :
 - `msa_test/stockage.py` — requête `:8080/storage/status` et capacité relevée ;
 - `msa_test/pv_excel.py` — remplissage des fiches de test Excel (édition XML ciblée) ;
 - `msa_test/pdf_excel.py` — export PDF des fiches par pilotage d'Excel (COM) ;
+- `msa_test/mac_pv.py` — report des adresses MAC dans la fiche de test du NVR ;
 - `msa_test/rapport.py` — sauvegarde JSON, export CSV, génération du PV ;
 - `msa_test/rapport_html.py` — rapport visuel HTML des lignes ID#188 / ID#199 ;
 - `msa_test/interface.py` — interface graphique Tkinter.

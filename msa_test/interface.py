@@ -13,7 +13,7 @@ import webbrowser
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from . import __version__, pdf_excel, pv_excel, rapport, rapport_html
+from . import __version__, mac_pv, pdf_excel, pv_excel, rapport, rapport_html
 from .chemins import ouvrir_dans_l_explorateur, racine_application
 from .stockage import CAPACITE_MINIMALE, LOGIN_REST, MOT_DE_PASSE_REST
 from .smart_parser import valeur_est_nulle
@@ -176,6 +176,7 @@ class Application(tk.Tk):
 
         self._construire_carte_switch()
         self._construire_pv()
+        self._construire_mac_pv()
         self.var_ip.trace_add("write", lambda *_: self._rafraichir_apercu())
         self.var_nombre.trace_add("write", lambda *_: self._rafraichir_apercu())
         self._rafraichir_apercu()
@@ -272,6 +273,255 @@ class Application(tk.Tk):
         if self.var_type_pv.get() == TYPE_PV_RERNG:
             return self.var_modele_rerng.get().strip()
         return self.var_modele_mp14.get().strip()
+
+    # ------------------------------------------------------------------ #
+    # Onglet : report des adresses MAC dans la fiche de test du NVR
+    # ------------------------------------------------------------------ #
+    def _construire_mac_pv(self):
+        cadre = ttk.Frame(self.onglets, padding=(4, 6))
+        self.onglets.add(cadre, text="  MAC → PV NVR  ")
+        cadre.grid_columnconfigure(1, weight=1)
+
+        self.var_releve_mac = tk.StringVar()
+        self.var_dossier_pv_nvr = tk.StringVar()
+        self.var_pv_nvr = tk.StringVar()
+        self.plan_mac = None
+        self._pv_proposes = {}
+
+        def ligne(rang, libelle, variable, commande, texte_bouton="Parcourir..."):
+            ttk.Label(cadre, text=libelle).grid(row=rang, column=0, sticky="w", padx=8, pady=3)
+            champ = ttk.Entry(cadre, textvariable=variable, width=56)
+            champ.grid(row=rang, column=1, sticky="ew", pady=3)
+            ttk.Button(cadre, text=texte_bouton, command=commande).grid(
+                row=rang, column=2, sticky="w", padx=8
+            )
+            return champ
+
+        ligne(0, "Relevé des MAC", self.var_releve_mac, self._choisir_releve_mac)
+        ligne(1, "Dossier des PV NVR", self.var_dossier_pv_nvr, self._choisir_dossier_pv_nvr)
+
+        ttk.Label(cadre, text="PV concordant").grid(row=2, column=0, sticky="w", padx=8, pady=3)
+        self.liste_pv_nvr = ttk.Combobox(
+            cadre, textvariable=self.var_pv_nvr, width=56, state="readonly"
+        )
+        self.liste_pv_nvr.grid(row=2, column=1, sticky="ew", pady=3)
+        self.liste_pv_nvr.bind("<<ComboboxSelected>>", lambda _: self._preparer_mac_pv())
+        ttk.Button(cadre, text="Autre PV...", command=self._choisir_pv_nvr).grid(
+            row=2, column=2, sticky="w", padx=8
+        )
+
+        self.etiquette_mac_pv = ttk.Label(
+            cadre, text="", foreground="#555555", wraplength=720, justify="left"
+        )
+        self.etiquette_mac_pv.grid(row=3, column=0, columnspan=3, sticky="w", padx=8, pady=(4, 2))
+
+        colonnes = ("module", "cellule", "mac", "actuelle", "source")
+        self.apercu_mac = ttk.Treeview(cadre, columns=colonnes, show="headings", height=7)
+        for colonne, titre, largeur in (
+            ("module", "Module", 170),
+            ("cellule", "Cellule", 70),
+            ("mac", "Adresse MAC à écrire", 170),
+            ("actuelle", "Valeur actuelle du PV", 170),
+            ("source", "Source", 110),
+        ):
+            self.apercu_mac.heading(colonne, text=titre)
+            self.apercu_mac.column(colonne, width=largeur, anchor="w")
+        self.apercu_mac.tag_configure("remplace", background="#fbe9c9")
+        self.apercu_mac.tag_configure("identique", background="#e3f6e8")
+        self.apercu_mac.grid(row=4, column=0, columnspan=3, sticky="ew", padx=8, pady=4)
+
+        actions = ttk.Frame(cadre)
+        actions.grid(row=5, column=0, columnspan=3, sticky="ew", padx=8, pady=(2, 4))
+        self.bouton_ecrire_mac = ttk.Button(
+            actions, text="Écrire les MAC dans le PV", command=self._ecrire_mac_pv,
+            state="disabled",
+        )
+        self.bouton_ecrire_mac.pack(side="left")
+        ttk.Button(actions, text="Ouvrir le PV", command=self._ouvrir_pv_nvr).pack(
+            side="left", padx=8
+        )
+        ttk.Button(
+            actions, text="Dernier relevé de MAC", command=self._dernier_releve_mac
+        ).pack(side="left")
+
+        self.var_dossier_pv_nvr.trace_add("write", lambda *_: self._proposer_pv_nvr())
+        self.after(300, self._dernier_releve_mac)
+
+    def _choisir_releve_mac(self):
+        chemin = filedialog.askopenfilename(
+            title="Choisir le relevé des adresses MAC",
+            initialdir=rapport.dossier_resultats(self.racine),
+            filetypes=[("Relevé des adresses MAC", "adresses_MAC*.txt"), ("Texte", "*.txt")],
+        )
+        if chemin:
+            self.var_releve_mac.set(chemin)
+            self._proposer_pv_nvr()
+
+    def _dernier_releve_mac(self):
+        chemin = mac_pv.dernier_releve_mac(rapport.dossier_resultats(self.racine))
+        if chemin:
+            self.var_releve_mac.set(chemin)
+            self._proposer_pv_nvr()
+        elif not self.var_releve_mac.get():
+            self.etiquette_mac_pv.configure(
+                text="Aucun relevé d'adresses MAC dans le dossier d'enregistrement : "
+                "lancez « Relever les adresses MAC » ou choisissez un fichier.",
+                foreground="#555555",
+            )
+
+    def _choisir_dossier_pv_nvr(self):
+        chemin = filedialog.askdirectory(
+            title="Dossier contenant les PV des NVR",
+            initialdir=self.var_dossier_pv_nvr.get() or None,
+        )
+        if chemin:
+            self.var_dossier_pv_nvr.set(chemin)
+            self._enregistrer_preferences()
+
+    def _choisir_pv_nvr(self):
+        chemin = filedialog.askopenfilename(
+            title="Choisir la fiche de test du NVR",
+            initialdir=self.var_dossier_pv_nvr.get() or None,
+            filetypes=[("Fiche de test Excel", "*.xlsx *.xlsm"), ("Tous les fichiers", "*.*")],
+        )
+        if chemin:
+            self._pv_proposes = {os.path.basename(chemin): chemin}
+            self.liste_pv_nvr.configure(values=[os.path.basename(chemin)])
+            self.var_pv_nvr.set(os.path.basename(chemin))
+            self._preparer_mac_pv()
+
+    def _releve_mac(self):
+        chemin = self.var_releve_mac.get().strip()
+        if not chemin:
+            return None
+        return mac_pv.lire_releve_mac(chemin)
+
+    def _proposer_pv_nvr(self):
+        """Liste les PV dont le numero correspond au NVR du releve."""
+        try:
+            releve = self._releve_mac()
+        except pv_excel.ErreurPV as err:
+            self._afficher_etat_mac(str(err), erreur=True)
+            return
+        if releve is None:
+            return
+        trouves = mac_pv.pv_concordants(self.var_dossier_pv_nvr.get().strip(), releve["serie_nvr"])
+        self._pv_proposes = {os.path.basename(p): p for p in trouves}
+        noms = list(self._pv_proposes)
+        self.liste_pv_nvr.configure(values=noms)
+        self.var_pv_nvr.set(noms[0] if noms else "")
+        self._preparer_mac_pv()
+
+    def _chemin_pv_nvr(self):
+        return self._pv_proposes.get(self.var_pv_nvr.get())
+
+    def _afficher_etat_mac(self, texte, erreur=False, alerte=False):
+        couleur = "#a00000" if erreur else ("#8a5a00" if alerte else "#00693e")
+        self.etiquette_mac_pv.configure(text=texte, foreground=couleur)
+
+    def _preparer_mac_pv(self):
+        """Calcule et affiche ce qui sera ecrit, sans rien modifier."""
+        for ligne in self.apercu_mac.get_children():
+            self.apercu_mac.delete(ligne)
+        self.plan_mac = None
+        self.bouton_ecrire_mac.configure(state="disabled")
+        try:
+            releve = self._releve_mac()
+        except pv_excel.ErreurPV as err:
+            self._afficher_etat_mac(str(err), erreur=True)
+            return
+        if releve is None:
+            return
+        resume = "NVR n° %s - %d module(s) CPU - relevé du %s" % (
+            releve["serie_nvr"] or "?",
+            len([c for c in releve["adresses"] if c != mac_pv.CLE_SWITCH]),
+            releve["date"].replace("T", " ") or "?",
+        )
+        chemin = self._chemin_pv_nvr()
+        if not chemin:
+            dossier = self.var_dossier_pv_nvr.get().strip()
+            self._afficher_etat_mac(
+                resume + "\nAucun PV concordant "
+                + ("dans %s" % dossier if dossier else ": choisissez le dossier des PV NVR")
+                + " - utilisez « Autre PV... » au besoin.",
+                alerte=True,
+            )
+            return
+        try:
+            plan = mac_pv.preparer(chemin, releve)
+        except pv_excel.ErreurPV as err:
+            self._afficher_etat_mac(resume + "\n" + str(err), erreur=True)
+            return
+
+        a_remplacer = {l["cellule"] for l in mac_pv.remplacements(plan)}
+        for l in plan["lignes"]:
+            identique = l["actuelle"].strip().upper() == l["mac"]
+            tag = "remplace" if l["cellule"] in a_remplacer else ("identique" if identique else "")
+            self.apercu_mac.insert(
+                "", "end",
+                values=(l["libelle"], l["cellule"], l["mac"], l["actuelle"], l["source"]),
+                tags=(tag,),
+            )
+        pv = plan["pv"]
+        modele = "%s%s" % (
+            pv["modele"] or "modèle inconnu",
+            "-%s" % pv["variante"] if pv["variante"] not in (None,) and pv["modele"] == "MP14-NVR" else "",
+        )
+        messages = [resume, "PV : %s - feuille « %s »" % (modele, pv["feuille"])]
+        messages += ["ERREUR : " + e for e in plan["erreurs"]]
+        messages += ["Attention : " + a for a in plan["alertes"]]
+        if a_remplacer:
+            messages.append("%d cellule(s) déjà remplie(s) avec une autre adresse (en orange)." % len(a_remplacer))
+        self._afficher_etat_mac(
+            "\n".join(messages),
+            erreur=bool(plan["erreurs"]),
+            alerte=bool(plan["alertes"] or a_remplacer),
+        )
+        if not plan["erreurs"] and plan["lignes"]:
+            self.plan_mac = plan
+            self.bouton_ecrire_mac.configure(state="normal")
+
+    def _ecrire_mac_pv(self):
+        plan = self.plan_mac
+        if plan is None:
+            return
+        a_remplacer = mac_pv.remplacements(plan)
+        if a_remplacer and not messagebox.askyesno(
+            "Remplacer des adresses",
+            "Ces cellules contiennent déjà une autre adresse :\n\n"
+            + "\n".join(
+                "%s (%s) : %s -> %s" % (l["libelle"], l["cellule"], l["actuelle"], l["mac"])
+                for l in a_remplacer
+            )
+            + "\n\nLes remplacer ?",
+        ):
+            return
+        sauvegardes = os.path.join(rapport.dossier_resultats(self.racine), "sauvegardes_pv")
+        try:
+            sauvegarde = mac_pv.ecrire(plan, sauvegardes)
+        except (pv_excel.ErreurPV, OSError) as err:
+            messagebox.showerror("Écriture impossible", str(err))
+            return
+        chemin = plan["pv"]["chemin"]
+        self._tracer("MAC écrites dans %s (%d cellule(s))" % (chemin, len(plan["lignes"])))
+        if sauvegarde:
+            self._tracer("Copie du PV d'origine : %s" % sauvegarde)
+        self._preparer_mac_pv()
+        messagebox.showinfo(
+            "Adresses MAC",
+            "%d adresse(s) MAC écrite(s) dans :\n%s\n\nCopie du PV d'origine :\n%s"
+            % (len(plan["lignes"]), chemin, sauvegarde),
+        )
+
+    def _ouvrir_pv_nvr(self):
+        chemin = self._chemin_pv_nvr()
+        if not chemin:
+            messagebox.showinfo("PV NVR", "Aucun PV sélectionné.")
+            return
+        try:
+            ouvrir_dans_l_explorateur(chemin)
+        except Exception as err:
+            messagebox.showinfo("PV NVR", "Ouverture impossible (%s) :\n%s" % (err, chemin))
 
     def _numeros_msa(self):
         return {rang: variable.get().strip() for rang, variable in enumerate(self.vars_numeros)}
@@ -578,6 +828,7 @@ class Application(tk.Tk):
             "modele_pv_mp14": self.var_modele_mp14,
             "modele_pv_rerng": self.var_modele_rerng,
             "dossier_enregistrement": self.var_dossier,
+            "dossier_pv_nvr": self.var_dossier_pv_nvr,
         }
 
     # Champs mot de passe : enregistres seulement si l'operateur le demande,
