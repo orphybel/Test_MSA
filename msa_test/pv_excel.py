@@ -18,8 +18,14 @@ Cellules renseignees (une fiche par module MSA) :
 """
 
 import datetime
+import io
 import os
 import re
+import shutil
+import sys
+import tempfile
+import time
+import uuid
 import zipfile
 from xml.sax.saxutils import escape
 
@@ -275,7 +281,9 @@ def remplir_pv(modele, destination, numero_msa, operateur, valeurs, date=None):
     date = date or datetime.date.today()
 
     try:
-        source = zipfile.ZipFile(modele)
+        # Lu en memoire : le modele n'est pas tenu ouvert pendant l'ecriture.
+        with open(chemin_systeme(modele), "rb") as fichier:
+            source = zipfile.ZipFile(io.BytesIO(fichier.read()))
     except (OSError, zipfile.BadZipFile) as err:
         raise ErreurPV("Modele de PV illisible (%s) : %s" % (modele, err))
 
@@ -328,32 +336,120 @@ def ecrire_archive(source, destination, modifications):
 
     Les entrees presentes dans `modifications` (chemin -> XML) sont
     remplacees, toutes les autres sont recopiees octet pour octet dans le meme
-    ordre. L'ecriture passe par un fichier temporaire : le fichier de
-    destination, qui peut etre la source elle-meme, n'est remplace qu'une fois
-    l'archive complete. Un classeur ouvert dans Excel ne peut pas etre
-    remplace : l'erreur est alors explicite.
+    ordre. L'archive complete est d'abord construite dans un fichier
+    temporaire, puis mise a la place de `destination` (voir
+    `remplacer_fichier`). `source` ne doit pas tenir ouvert le fichier
+    `destination` lui-meme : sous Windows, un fichier ouvert ne peut pas etre
+    remplace, meme par le programme qui l'a ouvert.
     """
     destination = os.path.abspath(destination)
-    os.makedirs(os.path.dirname(destination), exist_ok=True)
-    temporaire = destination + ".tmp"
+    dossier = os.path.dirname(destination)
     try:
-        with zipfile.ZipFile(temporaire, "w") as sortie:
-            for info in source.infolist():
-                if info.filename in modifications:
-                    sortie.writestr(info, modifications[info.filename].encode("utf-8"))
-                else:
-                    sortie.writestr(info, source.read(info.filename))
+        os.makedirs(chemin_systeme(dossier), exist_ok=True)
     except OSError as err:
-        _supprimer(temporaire)
-        raise ErreurPV("Ecriture impossible de %s : %s" % (destination, err))
+        raise ErreurPV("Dossier %s inaccessible : %s" % (dossier, expliquer_erreur(err)))
+
+    # Le fichier temporaire est cree a cote de la destination (remplacement
+    # atomique). Si le dossier n'autorise pas la creation de fichiers
+    # (partage reseau en modification seule), il est cree dans le dossier
+    # temporaire de Windows.
+    temporaire = None
+    for repertoire in (dossier, tempfile.gettempdir()):
+        candidat = os.path.join(repertoire, "~msa_%s.tmp" % uuid.uuid4().hex[:8])
+        try:
+            _construire_archive(source, chemin_systeme(candidat), modifications)
+        except OSError as err:
+            _supprimer(chemin_systeme(candidat))
+            derniere_erreur = err
+            continue
+        temporaire = candidat
+        break
+    if temporaire is None:
+        raise ErreurPV("Ecriture impossible de %s : %s"
+                       % (destination, expliquer_erreur(derniere_erreur)))
+    remplacer_fichier(temporaire, destination)
+
+
+def _construire_archive(source, chemin, modifications):
+    with zipfile.ZipFile(chemin, "w") as sortie:
+        for info in source.infolist():
+            if info.filename in modifications:
+                sortie.writestr(info, modifications[info.filename].encode("utf-8"))
+            else:
+                sortie.writestr(info, source.read(info.filename))
+
+
+# Erreurs Windows passageres (antivirus, indexation, synchronisation qui
+# examinent le fichier juste ecrit) : on reessaie quelques fois.
+_ERREURS_PASSAGERES = (5, 32, 33)
+_ESSAIS = 3
+_ATTENTE = 0.3
+
+
+def remplacer_fichier(temporaire, destination):
+    """Met `temporaire` a la place de `destination`, puis le supprime.
+
+    1. Renommage (os.replace) : atomique, le fichier n'est jamais a moitie
+       ecrit. Reessaye si le fichier est momentanement verrouille.
+    2. Si le renommage est refuse (partage reseau autorisant la modification
+       mais pas la suppression/le renommage, fichier temporaire cree dans un
+       autre dossier...), le contenu est recopie par-dessus la destination.
+    """
+    tmp, dest = chemin_systeme(temporaire), chemin_systeme(destination)
+    meme_dossier = (os.path.normcase(os.path.dirname(os.path.abspath(temporaire)))
+                    == os.path.normcase(os.path.dirname(os.path.abspath(destination))))
+    erreur = None
+    if meme_dossier:
+        for essai in range(_ESSAIS):
+            try:
+                os.replace(tmp, dest)
+                return
+            except OSError as err:
+                erreur = err
+                if getattr(err, "winerror", None) not in _ERREURS_PASSAGERES:
+                    break
+                time.sleep(_ATTENTE)
     try:
-        os.replace(temporaire, destination)
+        shutil.copyfile(tmp, dest)
     except OSError as err:
-        _supprimer(temporaire)
-        raise ErreurPV(
-            "%s ne peut pas etre remplace : fermez-le dans Excel puis "
-            "recommencez (%s)." % (os.path.basename(destination), err)
-        )
+        _supprimer(tmp)
+        raise ErreurPV("%s ne peut pas etre enregistre : %s"
+                       % (os.path.basename(destination), expliquer_erreur(err)))
+    _supprimer(tmp)
+
+
+def expliquer_erreur(err):
+    """Message comprehensible par l'operateur, avec le code d'origine."""
+    code = getattr(err, "winerror", None) or getattr(err, "errno", None)
+    detail = "%s [code %s]" % (getattr(err, "strerror", None) or err, code)
+    if getattr(err, "winerror", None) in (32, 33):
+        return ("le fichier est utilise par un autre programme (ouvert dans Excel, "
+                "par un collegue sur le reseau, ou en cours d'analyse/synchronisation)"
+                " - " + detail)
+    if isinstance(err, PermissionError):
+        return ("acces refuse : fichier en lecture seule, ouvert dans Excel, ou "
+                "droits insuffisants sur ce dossier reseau - " + detail)
+    if isinstance(err, FileNotFoundError):
+        return "chemin introuvable (lecteur reseau deconnecte ?) - " + detail
+    if code in (206, 36):  # ERROR_FILENAME_EXCED_RANGE / ENAMETOOLONG
+        return "chemin trop long - " + detail
+    return detail
+
+
+def chemin_systeme(chemin):
+    """Prefixe les chemins longs (>= 248 caracteres) sous Windows.
+
+    Sans le prefixe \\\\?\\, Windows refuse les chemins de plus de 260
+    caracteres, frequents dans les arborescences reseau.
+    """
+    if sys.platform != "win32":
+        return chemin
+    absolu = os.path.abspath(chemin)
+    if len(absolu) < 248 or absolu.startswith("\\\\?\\"):
+        return absolu
+    if absolu.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolu[2:]
+    return "\\\\?\\" + absolu
 
 
 def _supprimer(chemin):

@@ -12,7 +12,7 @@ import openpyxl
 import pytest
 from openpyxl.styles import Border, Side
 
-from msa_test import mac_pv
+from msa_test import mac_pv, pv_excel
 from msa_test.mac_pv import CLE_SWITCH
 from msa_test.pv_excel import ErreurPV, lire_cellule
 
@@ -320,19 +320,111 @@ def test_variante_incoherente_signalee(pv_mp14, tmp_path):
     assert plan["erreurs"] == []
 
 
+def _fichiers_temporaires(dossier):
+    return [f for f in os.listdir(dossier) if f.endswith(".tmp")]
+
+
+def test_pv_non_tenu_ouvert_pendant_le_remplacement(pv_rerng, tmp_path, monkeypatch):
+    """Sous Windows, un fichier ouvert (meme par le logiciel) ne peut pas etre
+    remplace : [WinError 5] Acces refuse sur le partage reseau."""
+    plan = mac_pv.preparer(pv_rerng, mac_pv.lire_releve_mac(_releve(tmp_path)))
+    remplacement = os.replace
+    ouverts = []
+
+    def verifier(source, destination):
+        cible = os.path.realpath(destination)
+        for fd in os.listdir("/proc/self/fd"):
+            try:
+                if os.path.realpath(os.readlink("/proc/self/fd/" + fd)) == cible:
+                    ouverts.append(fd)
+            except OSError:
+                pass
+        remplacement(source, destination)
+
+    monkeypatch.setattr("msa_test.pv_excel.os.replace", verifier)
+    mac_pv.ecrire(plan)
+    assert ouverts == []
+
+
+def test_renommage_refuse_sur_le_reseau(pv_rerng, tmp_path, monkeypatch):
+    """Partage autorisant la modification mais pas le renommage : le contenu
+    est recopie par-dessus le PV, sans fichier temporaire residuel."""
+    plan = mac_pv.preparer(pv_rerng, mac_pv.lire_releve_mac(_releve(tmp_path)))
+
+    def refuse(source, destination):
+        erreur = PermissionError(13, "Acces refuse")
+        erreur.winerror = 5
+        raise erreur
+
+    monkeypatch.setattr("msa_test.pv_excel.os.replace", refuse)
+    monkeypatch.setattr("msa_test.pv_excel._ATTENTE", 0)
+    mac_pv.ecrire(plan)
+    relu = mac_pv.analyser_pv(pv_rerng)
+    assert all(relu["valeurs"][l["cellule"]] == l["mac"] for l in plan["lignes"])
+    assert _fichiers_temporaires(os.path.dirname(pv_rerng)) == []
+
+
 def test_pv_ouvert_dans_excel(pv_rerng, tmp_path, monkeypatch):
-    """Le remplacement echoue (fichier verrouille) : message clair, PV intact."""
+    """Ni renommage ni ecriture possibles : message clair, PV intact."""
     plan = mac_pv.preparer(pv_rerng, mac_pv.lire_releve_mac(_releve(tmp_path)))
     avant = open(pv_rerng, "rb").read()
 
-    def verrouille(source, destination):
-        raise PermissionError("fichier utilise par un autre processus")
+    def verrouille(*args):
+        erreur = PermissionError(13, "Le processus ne peut pas acceder au fichier")
+        erreur.winerror = 32
+        raise erreur
 
     monkeypatch.setattr("msa_test.pv_excel.os.replace", verrouille)
-    with pytest.raises(ErreurPV, match="fermez-le dans Excel"):
+    monkeypatch.setattr("msa_test.pv_excel.shutil.copyfile", verrouille)
+    monkeypatch.setattr("msa_test.pv_excel._ATTENTE", 0)
+    with pytest.raises(ErreurPV, match="utilise par un autre programme"):
         mac_pv.ecrire(plan)
     assert open(pv_rerng, "rb").read() == avant
-    assert not os.path.exists(pv_rerng + ".tmp")
+    assert _fichiers_temporaires(os.path.dirname(pv_rerng)) == []
+
+
+def test_dossier_sans_droit_de_creation(pv_rerng, tmp_path, monkeypatch):
+    """Creation de fichier interdite dans le dossier du PV : le fichier
+    temporaire est construit dans le dossier temporaire de Windows."""
+    plan = mac_pv.preparer(pv_rerng, mac_pv.lire_releve_mac(_releve(tmp_path)))
+    dossier_pv = os.path.dirname(os.path.abspath(pv_rerng))
+    construire = pv_excel._construire_archive
+    autre = tmp_path / "temp_windows"
+    autre.mkdir()
+
+    def construction(source, chemin, modifications):
+        if os.path.dirname(os.path.abspath(chemin)) == dossier_pv:
+            raise PermissionError(13, "Acces refuse")
+        construire(source, chemin, modifications)
+
+    monkeypatch.setattr(pv_excel, "_construire_archive", construction)
+    monkeypatch.setattr(pv_excel.tempfile, "gettempdir", lambda: str(autre))
+    mac_pv.ecrire(plan)
+    relu = mac_pv.analyser_pv(pv_rerng)
+    assert all(relu["valeurs"][l["cellule"]] == l["mac"] for l in plan["lignes"])
+    assert os.listdir(autre) == []
+
+
+def test_sauvegarde_impossible_pv_intact(pv_rerng, tmp_path, monkeypatch):
+    plan = mac_pv.preparer(pv_rerng, mac_pv.lire_releve_mac(_releve(tmp_path)))
+    avant = open(pv_rerng, "rb").read()
+    bloque = tmp_path / "fichier"
+    bloque.write_text("x")
+    with pytest.raises(ErreurPV, match="Sauvegarde impossible.*pas ete modifie"):
+        mac_pv.ecrire(plan, str(bloque / "sauvegardes"))
+    assert open(pv_rerng, "rb").read() == avant
+
+
+def test_chemins_longs_windows(monkeypatch):
+    monkeypatch.setattr(pv_excel.sys, "platform", "win32")
+    monkeypatch.setattr(pv_excel.os.path, "abspath", lambda p: p)
+    court = "C:\\PV\\a.xlsm"
+    assert pv_excel.chemin_systeme(court) == court
+    long_local = "C:\\" + "d" * 300 + "\\a.xlsm"
+    assert pv_excel.chemin_systeme(long_local) == "\\\\?\\" + long_local
+    long_unc = "\\\\srvfich01\\DUP\\" + "d" * 300 + "\\a.xlsm"
+    assert pv_excel.chemin_systeme(long_unc) == (
+        "\\\\?\\UNC\\srvfich01\\DUP\\" + "d" * 300 + "\\a.xlsm")
 
 
 # ---------------------------------------------------------------------- #

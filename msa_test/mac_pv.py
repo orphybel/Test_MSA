@@ -18,9 +18,9 @@ modifiees dans le XML du classeur (macros et controles ActiveX conserves).
 
 import datetime
 import glob
+import io
 import os
 import re
-import shutil
 import zipfile
 
 from .pv_excel import (
@@ -29,7 +29,9 @@ from .pv_excel import (
     _desechapper,
     _lire_chaines_partagees,
     _remplacer_cellule,
+    chemin_systeme,
     ecrire_archive,
+    expliquer_erreur,
 )
 
 MARQUEUR_MAC = "@MAC"
@@ -193,7 +195,8 @@ def analyser_pv(chemin_pv):
     {"switch": "F27", 0: "F32", ...}, valeurs {ref: valeur actuelle}.
     """
     try:
-        archive = zipfile.ZipFile(chemin_pv)
+        with open(chemin_systeme(chemin_pv), "rb") as fichier:
+            archive = zipfile.ZipFile(io.BytesIO(fichier.read()))
     except (OSError, zipfile.BadZipFile) as err:
         raise ErreurPV("PV illisible (%s) : %s" % (os.path.basename(chemin_pv), err))
 
@@ -421,18 +424,33 @@ def ecrire(plan, dossier_sauvegarde=None):
     analyse = plan["pv"]
     chemin = analyse["chemin"]
 
+    try:
+        with open(chemin_systeme(chemin), "rb") as fichier:
+            contenu = fichier.read()
+    except OSError as err:
+        raise ErreurPV("Lecture impossible de %s : %s" % (chemin, expliquer_erreur(err)))
+
     sauvegarde = None
     if dossier_sauvegarde:
-        os.makedirs(dossier_sauvegarde, exist_ok=True)
         racine, extension = os.path.splitext(os.path.basename(chemin))
         sauvegarde = os.path.join(
             dossier_sauvegarde,
             "%s_avant_MAC_%s%s"
             % (racine, datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"), extension),
         )
-        shutil.copy2(chemin, sauvegarde)
+        # Copie du contenu deja lu (pas de copie des attributs/droits, que
+        # certains partages reseau refusent).
+        try:
+            os.makedirs(chemin_systeme(dossier_sauvegarde), exist_ok=True)
+            with open(chemin_systeme(sauvegarde), "wb") as fichier:
+                fichier.write(contenu)
+        except OSError as err:
+            raise ErreurPV("Sauvegarde impossible dans %s : %s - le PV n'a pas ete modifie."
+                           % (dossier_sauvegarde, expliquer_erreur(err)))
 
-    with zipfile.ZipFile(chemin) as source:
+    # Le PV est relu depuis la memoire : aucun acces au fichier ne reste
+    # ouvert pendant son remplacement (refuse par Windows sinon).
+    with zipfile.ZipFile(io.BytesIO(contenu)) as source:
         feuilles = _chemins_feuilles(source)
         xml = source.read(feuilles[analyse["feuille"]]).decode("utf-8")
         for ligne in plan["lignes"]:
